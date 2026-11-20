@@ -45,7 +45,7 @@ clean run is not mistaken for more than it is. Items are referenced from the cod
   where a loopback listener forwards**: an `ssh -L` tunnel, a local proxy or a port-forward on `127.0.0.1`
   can reach a remote host. Do not aim it at one unless you are authorized for what is behind it. A
   container or a network ACL outside the process is the supported containment.
-* **BL-12 `http://` only on loopback.** TLS on loopback is not supported; a remote host is `https://` only (proposed, `docs/remote-live-design.md`).
+* **BL-12 `http://` only on loopback.** TLS on loopback is not supported; a remote host is `https://` only (`docs/remote-live-design.md`).
 * **BL-12a Remote mode: the authorization is the operator's word.** The tool enforces the declared window
   and says in every report that it cannot verify the declaration. It cannot know whether you may test
   the host.
@@ -56,6 +56,9 @@ clean run is not mistaken for more than it is. Items are referenced from the cod
 * **BL-12c Remote mode: no proxy, no writes, one host.** A corporate proxy would sit between the tool and
   the certificate it verifies, so none is supported; writes to a remote host are never sent (no state
   snapshot can be taken from outside); one host per run.
+* **BL-12e Remote mode trusts your operating system's certificate store.** An empty or unusual store (a minimal
+  container, a corporate root) makes every handshake fail closed: nothing is sent. Point `ca_bundle` at the right
+  authority. The tool has been run against one real public host only (the design, section 10).
 * **BL-12d Remote mode: your clock and your disk.** The window uses the local clock. The report names
   the host, the resolved address and the engagement; reports and evidence stay on your machine until
   you `purge` them, which a client contract may require.

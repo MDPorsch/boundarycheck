@@ -88,7 +88,7 @@ target, the transports or the engine (`tests/unit/test_independence.py`).
   * redirects are never followed (a redirect is `policy_denied`); proxy environment variables are
     ignored; `Accept-Encoding: identity`; the **decoded** body is capped (default 1 MiB) and a request
     has a timeout; a request budget (default 500) and a rate limit apply; the budget is a hard stop.
-  **Remote** (v0.2, proposed: `docs/remote-live-design.md`, awaiting the owner's review), to ONE declared
+  **Remote** (v0.2, `docs/remote-live-design.md`, approved by the owner), to ONE declared
   host and only then:
   * `base_url` is `https://host[:port]`; `scope.target.allowed_hosts` holds exactly one entry, the same
     host and port, in lowercase ASCII with no wildcard; an `authorization` block (an `engagement` and a

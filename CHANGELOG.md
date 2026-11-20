@@ -2,6 +2,25 @@
 
 All notable changes are recorded here. The format follows Keep a Changelog; versions follow SemVer.
 
+## [0.2.0] - 2026-11-20
+
+### Added: remote live mode (design approved by the owner, D-B19 to D-B24)
+- One declared remote host (`base_url` plus `allowed_hosts`, written twice), https only with the certificate
+  and host name always verified (an optional `ca_bundle` adds a private authority; nothing turns verification
+  off), the name resolved once and every address judged: public by default, private ranges only when listed
+  in `allowed_networks`, link-local (cloud metadata), multicast, reserved and IPv4-embedding IPv6 never.
+- An `authorization` block (`engagement`, `not_after`, optional `not_before`) plus `--ack-authorization` on
+  every run; the run refuses outside the window; the report says the declaration is the operator's and is not
+  verified, and names the host and the pinned address.
+- A lower default rate for a remote host (2 per second, at most 20); reads only, never a body, no proxy.
+- `boundarycheck preflight` (resolves and judges every address, sends no request) and `init --remote`.
+- 177 new tests (656 in all), 189 mutants of the new and changed code all killed, one real run against a
+  public HTTPS endpoint.
+
+### Changed
+- Superseded v0.1 pins: "a remote host is refused with the word loopback" (now: refused unless declared
+  completely) and three mutants of the old parser.
+
 ## [0.1.0] - 2026-11-20
 
 First release. The owner confirmed the licence (Apache-2.0) and approved publishing to PyPI on

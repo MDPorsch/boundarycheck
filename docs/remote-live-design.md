@@ -184,12 +184,12 @@ host: refused, token not sent there. The independence and mutation suites extend
 
 ## 9. Rollout (done)
 
-1. You read this and the branch; ask for changes.
-2. I merge only after you say so, then tag `v0.2.0`. A version with remote live is never published
-   by me without that.
-3. `v0.1.0` (loopback only, M4 included) can be published first; it does not depend on any of this.
+1. The owner reviewed the rules and approved D-B19 to D-B24 on 2026-11-20.
+2. Merged, tagged `v0.2.0`; the release workflow builds and verifies, and nothing reaches PyPI until the owner
+   approves the protected `pypi` environment (`docs/releasing.md`).
+3. `v0.1.0` (loopback only, M4 included) was published first and does not depend on any of this.
 
-## 10. Implementation status (on this branch, measured)
+## 10. Implementation status (measured at the merge)
 
 | | |
 |---|---|

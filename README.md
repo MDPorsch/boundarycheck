@@ -30,12 +30,12 @@ never look clean.
 
 ```bash
 pipx install boundarycheck          # or: uv tool install boundarycheck
-boundarycheck --version             # 0.1.0
+boundarycheck --version             # 0.2.0
 ```
 
 Published on PyPI as [`boundarycheck`](https://pypi.org/project/boundarycheck/) through a protected
 release workflow with signed provenance ([docs/releasing.md](docs/releasing.md)). A PyPI install validates
-configs, plans, and runs `--transport live` against loopback; the `fixture` transport and the examples need
+configs, plans, and runs `--transport live` against loopback or one declared remote host; the `fixture` transport and the examples need
 a source checkout, as in the next section.
 
 ## Try it in two minutes (no network, no credentials)
@@ -53,7 +53,7 @@ uv run boundarycheck test --config examples/lab.yaml --transport fixture
 Real output on the patched lab (419 cases: 240 reads, 81 refused writes, 98 concealment comparisons):
 
 ```text
-boundarycheck 0.1.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
+boundarycheck 0.2.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
 cases: no_issue_observed: 419, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 419)
   note: 7 write combination(s) that the policy allows were not exercised by design: write checks send only requests the policy says must be refused.
 exit code 0. Note: no_issue_observed does not mean the target is secure.
