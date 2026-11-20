@@ -55,6 +55,7 @@ dev = [
     # the deliberately vulnerable variant, which the lab's own wheel excludes).
     "tenant-boundary-lab[lab]",
     "keyring>=25.6,<26",
+    "jsonschema>=4.23,<5",
 ]
 
 [tool.uv.sources]
