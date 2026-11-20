@@ -10,8 +10,8 @@ replays read-only requests as each test user and compares what the API actually 
 policy says it should do. Every result is one of seven honest states, and a failed or partial run can
 never look clean.
 
-> **Status: v0.1.0, alpha.** Live targets are **loopback-only and read-only** (`GET`/`HEAD`): it tests the
-> API you run on your own machine. Write checks exist only against the built-in in-process lab. Use it
+> **Status: v0.2.0, alpha.** Live targets are read-only (`GET`/`HEAD`): your own machine, or **one declared
+> remote host** over verified HTTPS (see below). Write checks exist only against the built-in in-process lab. Use it
 > only against systems you own or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md)
 > and [LIMITATIONS.md](LIMITATIONS.md).
 
@@ -23,7 +23,7 @@ never look clean.
 | Role limits on read routes (BFLA): can a viewer reach an admin route? | Decide whether your policy is *right*: it judges the API against the policy you give it |
 | Hidden objects: does a forbidden object answer exactly like a missing one? | Prove an API is secure: `no_issue_observed` means one request matched the policy, nothing more |
 | Field exposure: does a response carry a field that role should not see? | Test timing channels, concurrency, rate limits or anything it was not told about |
-| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host in the released version. A scoped, https-only, allow-listed remote mode is **proposed** on the `remote-live` branch ([design](docs/remote-live-design.md)) and awaits review |
+| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host freely: a remote target must be declared completely, https only, one host, public addresses unless you list a private range ([design](docs/remote-live-design.md)) |
 | Refused writes (fixture only): does a request the policy says must be refused still **change a row**, whatever status it returns? | Send a write the policy allows: that would test functionality, and it would change state |
 
 ## Install
@@ -105,7 +105,7 @@ The config holds **no secrets**: a principal names the environment variable its 
 The policy is the heart of it, so write it from your requirements, not from the code under test.
 [`examples/lab.yaml`](examples/lab.yaml) is a complete, commented example.
 
-### A remote target (proposed: on the `remote-live` branch, awaiting review)
+### A remote target (0.2.0)
 
 ```bash
 uv run boundarycheck init --remote --output acme.yaml   # one https host, an authorization block, safe defaults

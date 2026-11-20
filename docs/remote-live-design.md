@@ -1,6 +1,6 @@
 # Remote live mode: design for your review
 
-**Status: implemented on the branch `remote-live`, NOT merged and NOT released: it waits for your review.** You asked for live mode to "work outside localhost but still
+**Status: approved by the owner on 2026-11-20 (D-B19 to D-B24), implemented and released in 0.2.0.** You asked for live mode to "work outside localhost but still
 secure", for many external assessments. That changes **egress** (the tool will open connections to
 networks you do not control) and **token handling** (a test user's token will cross a network), both
 of which you told me to stop and review before shipping. So this is a design plus an implementation on
@@ -182,7 +182,7 @@ host: refused, token not sent there. The independence and mutation suites extend
 | D-B23 | Reads only on a remote host; no proxy support | yes for v0.2 |
 | D-B24 | Rate default 2/s, cap 20/s, budget 500 | yes; tell me your clients' usual limits |
 
-## 9. Rollout
+## 9. Rollout (done)
 
 1. You read this and the branch; ask for changes.
 2. I merge only after you say so, then tag `v0.2.0`. A version with remote live is never published
@@ -193,10 +193,11 @@ host: refused, token not sent there. The independence and mutation suites extend
 
 | | |
 |---|---|
-| Tests | **656 pass** (the 479 of `main` plus 177 for this feature: the address policy, config validation, the transport against real TLS servers, the CLI and the report) |
+| Tests | **656 pass** at merge (the 479 of 0.1.0 plus 177 for this feature: the address policy, config validation, the transport against real TLS servers, the CLI and the report) |
 | Static | ruff and strict mypy clean; coverage 97%; the secret scan is clean |
 | Mutation check | **189 mutants, all killed** (3 survived the first run and exposed gaps in my tests: a host that is only valid as a URL host, a zone id on a public address, the default-port `Host` header; each is now tested) |
 | Real TLS | tested against throwaway servers on 127.0.0.1 with generated certificates (a good one, an untrusted authority, a wrong name, an expired certificate, a plaintext server, a private authority); in every refusal the server received **no request**, so no token was sent |
-| **Not tested** | against a real remote host on the Internet. Nothing here has ever left this machine. DNS, CDNs, real certificate chains and a real client network are untested |
-| **Needs you** | decisions D-B19 to D-B24 (section 8). Until you answer, this stays a draft pull request, unmerged and unreleased |
+| **Not tested** | CDNs, a real client network, a private certificate authority in the field, a corporate network with its own DNS |
+| Real server | one real run on 2026-11-20: a single anonymous `GET` of `https://api.github.com/zen`, a public endpoint meant for unauthenticated reads. The real certificate chain verified, the name was pinned to the address it resolved to, and the report carried the declaration and the address. That is one host on one day, not a field test |
+| **Decisions** | D-B19 to D-B24 (section 8): approved by the owner on 2026-11-20 ("I agree with the safety rules") |
 
