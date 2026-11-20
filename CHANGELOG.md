@@ -23,6 +23,14 @@ Five features (design: `docs/design-v0.3.md`; credential handling and SARIF priv
 - `Redactor` and the leak guard now also cover keychain values and `report.sarif`; `_run_live` returns the
   transport's own secrets for the run store.
 
+### Verification
+- 927 tests pass (656 at 0.2.0 plus the v0.3 tests), 96% line and branch coverage; ruff, format and strict mypy clean.
+- 248 mutants (189 from remote live and write checks, 59 new for v0.3) all killed. The first full run left two
+  alive, both in the OpenAPI importer (a cyclic schema was only tested for ending, and a path segment was only
+  tested for being refused, not for why); tests were added and both now die.
+- Built wheel: `Provides-Extra: keychain`, no lab or test files inside, clean-venv smoke test of `import-openapi`
+  and of the missing-extra message.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added: remote live mode (design approved by the owner, D-B19 to D-B24)

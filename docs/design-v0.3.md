@@ -109,6 +109,21 @@ judges is not independent.
 * SARIF is not a vulnerability proof: every result is a `finding_candidate` that a person reviews.
 * The OpenAPI skeleton knows the shape of the API, not who may see what. You still write the policy.
 
+## 6b. What was measured
+
+| Check | Result |
+|---|---|
+| Tests | 927 passed, 96% line and branch coverage (gate 90%) |
+| Lint, format, strict mypy | clean |
+| Mutation (`tools/mutation.py`) | 248 mutants, **248 killed**; the first full run left 2 alive (both OpenAPI importer), tests added, rerun killed both |
+| SARIF | validated against the official OASIS 2.1.0 JSON schema in the tests |
+| Secret scan | no findings in the tree or in history; the scanner caught its canary |
+| Wheel | `boundarycheck-0.3.0`, `Provides-Extra: keychain`, no lab or test files; clean-venv smoke test passed |
+
+Not measured: the keychain against a real operating-system store (the tests use an in-memory backend that is
+accepted only by name), and the new credential schemes against a real remote API. Both need your machine or your
+target.
+
 ## 7. Decisions I need from you
 
 | ID | Decision | My recommendation |
