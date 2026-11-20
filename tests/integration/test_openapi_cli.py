@@ -57,15 +57,19 @@ def test_import_will_not_overwrite_without_force(tmp_path: Path) -> None:
     assert out_path.read_text() != "keep me"
 
 
-@pytest.mark.parametrize("url", ["http://example.com/openapi.json", "https://example.com/openapi.yaml", "HTTPS://example.com/x"])
-def test_a_url_is_refused_because_the_importer_never_fetches_anything(tmp_path: Path, url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "url", ["http://example.com/openapi.json", "https://example.com/openapi.yaml", "HTTPS://example.com/x"]
+)
+def test_a_url_is_refused_because_the_importer_never_fetches_anything(
+    tmp_path: Path, url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def no_network(*_a: Any, **_k: Any) -> None:
         raise AssertionError("no network")
 
     monkeypatch.setattr(socket, "socket", no_network)
     monkeypatch.setattr(socket, "getaddrinfo", no_network)
     out = _invoke("import-openapi", url, "--output", str(tmp_path / "o.yaml"))
-    assert out.exit_code == 2 and "file" in out.output.lower() and not (tmp_path / "o.yaml").exists()
+    assert out.exit_code == 2 and "url" in out.output.lower() and not (tmp_path / "o.yaml").exists()
 
 
 def test_a_missing_file_a_directory_and_an_invalid_document_are_clear_errors_that_write_nothing(tmp_path: Path) -> None:
@@ -111,7 +115,11 @@ def test_a_skeleton_run_before_editing_reports_findings_not_a_false_clean(tmp_pa
         out = runner.invoke(
             __import__("boundarycheck.cli", fromlist=["app"]).app,
             ["test", "--config", str(out_path), "--transport", "live", "--runs-dir", str(tmp_path / "r")],
-            env={"BC_TOKEN_ALICE": "tok-" + "a" * 20, "BC_TOKEN_BOB": "tok-" + "b" * 20, "BC_TOKEN_CAROL": "tok-" + "c" * 20},
+            env={
+                "BC_TOKEN_ALICE": "tok-" + "a" * 20,
+                "BC_TOKEN_BOB": "tok-" + "b" * 20,
+                "BC_TOKEN_CAROL": "tok-" + "c" * 20,
+            },
             catch_exceptions=False,
         )
     assert out.exit_code == 1 and "finding_candidate" in out.output

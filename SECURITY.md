@@ -2,8 +2,8 @@
 
 ## What this is
 
-boundarycheck is a security *testing* tool. It is read-only and, in v0.1, loopback-only. Use it only
-against systems you own or are explicitly authorized to assess.
+boundarycheck is a security *testing* tool. It sends reads only, to your own machine or to ONE declared remote host
+over verified HTTPS. Use it only against systems you own or are explicitly authorized to assess.
 
 ## Reporting a vulnerability in boundarycheck
 
@@ -20,7 +20,11 @@ In scope (please report):
   message, or a file created with permissions wider than `0600` (directories `0700`);
 * a response from a target that corrupts or injects into a report (Markdown or JSON), or crashes the run
   in a way that exits `0` or `1`;
-* a way to make a failed, partial or empty run exit `0`.
+* a way to make a failed, partial or empty run exit `0`;
+* a credential (env, keychain, API key, cookie) reaching a file, a report (including `report.sarif`), a log, a
+  command line or an error message, or a keychain read that falls back to a plaintext store;
+* an OpenAPI document that makes `import-openapi` fetch anything, read another file, exhaust memory or time, or
+  write YAML that carries something the document should not be able to say.
 
 Out of scope: findings about someone else's API that boundarycheck helps you discover (report those to
 that API's owner); the limits listed in [LIMITATIONS.md](LIMITATIONS.md) (they are documented, not

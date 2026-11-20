@@ -62,6 +62,17 @@ clean run is not mistaken for more than it is. Items are referenced from the cod
 * **BL-12d Remote mode: your clock and your disk.** The window uses the local clock. The report names
   the host, the resolved address and the engagement; reports and evidence stay on your machine until
   you `purge` them, which a client contract may require.
+* **BL-12f Credentials: no login flows.** The tool uses a bearer token, an API key in a header or a session cookie that
+  YOU supply. It never exchanges a password for a session (that is a write with credentials in it), and it does not
+  do OAuth, Basic or Digest, client certificates or a key in a query string.
+* **BL-12g The keychain is only as safe as your login.** Only real OS stores are used (never a file), and a value is
+  read straight from the chosen backend, but anyone who can use your logged-in session can read it. It is tested here
+  with an in-memory stand-in: the real macOS, Windows and Linux stores have not been exercised by the test suite.
+* **BL-12h SARIF publishes names.** A SARIF file names your tenants, principals, routes and actions. Uploaded to a
+  public repository's code scanning it is public. GitHub also limits how many results one upload may carry.
+* **BL-12i The OpenAPI skeleton is not a policy.** It knows the shape of the API, not who may see what. Only
+  OpenAPI 3.x, only GET and HEAD, local `$ref`s only; names that do not fit the config's alphabets are skipped with a
+  note; `oneOf` and `anyOf` are merged as a union; the 2xx JSON schema is the only source of field names.
 * **BL-13 Not a defence against a hostile local machine.** A local attacker who can read the process,
   the environment or the runs directory is out of scope.
 

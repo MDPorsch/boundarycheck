@@ -468,3 +468,15 @@ def test_the_importer_never_writes_a_secret_or_a_token_placeholder_that_looks_li
     text = _import(spec()).yaml_text
     assert "Bearer" not in text and "BC_TOKEN_" in text  # env NAMES only
     assert parse(yaml.safe_load(text)) is not None  # and the whole output validates
+
+
+def test_a_document_nested_deeper_than_the_cap_is_refused_even_when_it_would_still_parse() -> None:
+    from boundarycheck.openapi import MAX_DEPTH, OpenApiError, import_openapi  # noqa: PLC0415
+
+    nested: dict[str, Any] = {}
+    node = nested
+    for _ in range(MAX_DEPTH + 5):
+        node["a"] = {}
+        node = node["a"]
+    with pytest.raises(OpenApiError, match="deeply"):
+        import_openapi(json.dumps({**spec(), "x-deep": nested}))
