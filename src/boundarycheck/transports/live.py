@@ -22,6 +22,7 @@ import httpx
 
 from boundarycheck import __version__
 from boundarycheck.config import Config
+from boundarycheck.credentials import Material, resolve_materials
 from boundarycheck.model import EgressViolation, Observation, PolicyRefusal, TransportUnavailable
 from boundarycheck.netcheck import (
     AddressRefused,
@@ -33,7 +34,6 @@ from boundarycheck.netcheck import (
 )
 
 READ_METHODS: Final = frozenset({"GET", "HEAD"})
-_TOKEN = re.compile(r"^[\x21-\x7e]{8,4096}$")
 _PATH = re.compile(r"^/[A-Za-z0-9._~/-]{0,255}$")
 
 
@@ -125,6 +125,7 @@ class LiveTransport:
         *,
         credentials: Mapping[str, str],
         environ: Mapping[str, str],
+        materials: Mapping[str, Material] | None = None,
         rate_limit_rps: float = 10.0,
         timeout: float = 10.0,
         max_response_bytes: int = 1_048_576,
@@ -147,6 +148,7 @@ class LiveTransport:
             if (scheme, host, port) != (egress.scheme, egress.host, egress.port):
                 raise EgressViolation("the base_url is not the host the egress policy was built for")
         self._policy = egress
+        self.notes: list[str] = []  # why a credential could not be used (never a value)
         self._host = host
         self._port = port
         self.name = "live:remote" if egress.is_remote else "live:loopback"
@@ -159,7 +161,9 @@ class LiveTransport:
         self._origin = f"{egress.scheme}://{bracket}:{port}"
         shown = f"[{host}]" if ":" in host else host
         self._host_header = shown if (egress.is_remote and port == 443) else f"{shown}:{port}"
-        self._tokens = {p: environ[v] for p, v in credentials.items() if v in environ and _TOKEN.fullmatch(environ[v])}
+        # bearer tokens by env name (the v0.1 way) plus resolved materials of any scheme
+        legacy = {p: Material(value=environ[v]) for p, v in credentials.items() if v in environ}
+        self._materials = {p: m for p, m in {**legacy, **(materials or {})}.items() if m.usable()}
         self._interval = 1.0 / rate_limit_rps
         self._timeout = timeout
         self._cap = max_response_bytes
@@ -227,7 +231,8 @@ class LiveTransport:
         target = config.scope.target
         if target.base_url is None:
             raise TransportUnavailable("the config has no scope.target.base_url, which the live transport needs")
-        credentials = {k: p.credential.env for k, p in config.principals.items() if p.credential and p.credential.env}
+        notes: list[str] = []
+        materials = resolve_materials(config, environ, notes=notes)
         egress: EgressPolicy | None = None
         if target.is_remote:
             _scheme, host, port, _remote = parse_target_url(target.base_url)
@@ -235,17 +240,20 @@ class LiveTransport:
                 host=host, port=port, allowed_networks=target.allowed_networks,
                 ca_bundle=Path(target.ca_bundle) if target.ca_bundle else None,
             )  # fmt: skip
-        return cls(
-            target.base_url, credentials=credentials, environ=environ, rate_limit_rps=target.effective_rate_limit_rps,
+        transport = cls(
+            target.base_url, credentials={}, environ=environ, materials=materials,
+            rate_limit_rps=target.effective_rate_limit_rps,
             timeout=target.timeout_seconds, max_response_bytes=target.max_response_bytes, resolver=resolver,
             egress=egress,
         )  # fmt: skip
+        transport.notes = notes
+        return transport
 
     def has_credential(self, principal: str | None) -> bool:
-        return principal is None or principal in self._tokens
+        return principal is None or principal in self._materials
 
     def secrets(self) -> list[str]:
-        return list(self._tokens.values())
+        return [m.value for m in self._materials.values()]
 
     async def _pace(self) -> None:
         now = self._monotonic()
@@ -264,7 +272,7 @@ class LiveTransport:
             raise PolicyRefusal("the live transport never sends a request body")
         if not valid_path(path):
             raise PolicyRefusal("the request path is not acceptable")
-        if principal is not None and principal not in self._tokens:
+        if principal is not None and principal not in self._materials:
             raise PolicyRefusal(f"no usable credential for principal '{principal[:40]}'")
         await self._pace()
         headers = {
@@ -272,7 +280,8 @@ class LiveTransport:
             "User-Agent": f"boundarycheck/{__version__}",
         }  # fmt: skip
         if principal is not None:
-            headers["Authorization"] = f"Bearer {self._tokens[principal]}"
+            name, value = self._materials[principal].header()
+            headers[name] = value
         try:
             async with asyncio.timeout(self._timeout):
                 return await self._exchange(method, self._origin + path, headers)

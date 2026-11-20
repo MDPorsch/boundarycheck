@@ -145,7 +145,7 @@ redacted_evidence_refs, limitations, review_state`, a summary and run-level limi
 rendering of the same data. Every report states that `no_issue_observed` does not mean "secure", that
 the policy is the assessor's, and that writes are checked only on the fixture. Every case carries
 `state_changes` (empty for a read): the table, primary key and kind of each row a write changed, never a
-value. SARIF is not produced.
+value. SARIF is a third rendering of the same data (s11).
 
 ## 9. Write checks and the state diff (fixture transport only)
 
@@ -189,5 +189,35 @@ A config may declare **write actions** (`POST`, `PUT`, `PATCH`, `DELETE`) with a
 ## 10. Not in v0.1
 
 Writes to anything but the in-process fixture, remote hosts, credential attacks, route or host discovery,
-any model or external API call, SARIF, OS-keychain credentials, and OpenAPI import. Write checks on a live
-target are not offered because they need a state snapshot the tool cannot take from outside.
+any model or external API call, login flows (the tool never exchanges a password for a session), OAuth,
+Basic or Digest authentication, client certificates, and keys in a query string. Write checks on a live target
+are not offered because they need a state snapshot the tool cannot take from outside.
+
+## 11. v0.3 additions (docs/design-v0.3.md)
+
+* **Root path.** An action's `path` may be `/`. Every other path rule is unchanged.
+* **Credential schemes (s6).** A credential has `in: bearer` (default, `Authorization: Bearer`), `in: header`
+  with a `name` (and an optional `prefix` such as `Token `) or `in: cookie` with a `name`. The value comes from
+  an env variable or the keychain and is never in the config. Header names that change request framing (`Host`,
+  `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, ...) are refused; a cookie value may not contain
+  `;`, `,`, space, `"` or `\`; a key in a query string is not supported. A cookie the target sets is never
+  stored or replayed. The live transport only; the fixture mints its own bearer tokens.
+* **OS keychain.** `credential: {keychain: {service, username}}` reads the value at run time from the macOS
+  Keychain, the Windows Credential Locker, the Linux Secret Service or KWallet (the optional extra
+  `boundarycheck[keychain]`). A plaintext, file, "null" or "fail" backend is refused. `boundarycheck keychain
+  set|check|delete` manages entries; `set` uses a hidden prompt. A keychain value is covered by the leak guard
+  like an env value. A principal names an env variable **or** a keychain entry, not both.
+* **SARIF 2.1.0** (`report.sarif`, `report --format sarif`). Findings are results (severity high/medium/low is
+  level error/warning/note); every other non-clean case is a tool notification (capped at 200, the cap is
+  announced) and the invocation records the exit code, so a run that was not clean never looks clean. A result's
+  location is the action's declaration line in the config (`--sarif-uri` names the file as it appears in your
+  repository; an unsafe path becomes the file name). Fingerprints are stable. No response bodies, no values; the
+  file carries a notice that it names your tenants, principals and routes (do not upload it to a public
+  repository's code scanning for client work).
+* **OpenAPI import** (`boundarycheck import-openapi FILE -o boundarycheck.yaml`). A skeleton only: GET and HEAD
+  operations, snake-case path parameters, a resource kind per last parameter, field paths from the 2xx JSON
+  schema, placeholders that fail loudly (every capability `[]`, every field at the highest role), principals
+  whose credential scheme follows the document's security scheme, and **no remote `base_url`**. The document is
+  untrusted: size cap, no YAML aliases or anchors, depth cap, local `$ref` only (nothing fetched), cycle and
+  work caps, and every name that does not fit the config's alphabets is skipped, never passed through. The
+  result is parsed by the real config loader before it is written.

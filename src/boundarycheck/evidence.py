@@ -67,9 +67,11 @@ class RunStore:
         return True
 
     # --------------------------------------------------------------------------------- write ----
-    def save(self, result: RunResult, json_text: str, md_text: str, secrets: Iterable[str]) -> Path:
+    def save(
+        self, result: RunResult, json_text: str, md_text: str, secrets: Iterable[str], *, sarif: str | None = None
+    ) -> Path:
         blobs = {sha: json.dumps(blob, sort_keys=True, separators=(",", ":")) for sha, blob in result.evidence.items()}
-        assert_no_secrets([json_text, md_text, *blobs.values()], list(secrets))  # before anything exists
+        assert_no_secrets([json_text, md_text, sarif or "", *blobs.values()], list(secrets))  # before anything exists
         if not valid_run_id(result.run_id):
             raise StoreError("invalid run id")
         self._check_root(create=True)
@@ -80,6 +82,8 @@ class RunStore:
             _write_private(run_dir / "evidence" / f"{sha}.json", text.encode())
         _write_private(run_dir / "report.json", json_text.encode())
         _write_private(run_dir / "report.md", md_text.encode())
+        if sarif is not None:
+            _write_private(run_dir / "report.sarif", sarif.encode())
         return run_dir
 
     # ---------------------------------------------------------------------------------- read ----
@@ -106,8 +110,8 @@ class RunStore:
     def read_report(self, run_id: str, fmt: str) -> str:
         if not valid_run_id(run_id):
             raise StoreError("invalid run id")
-        if fmt not in ("json", "md"):
-            raise StoreError("format must be json or md")
+        if fmt not in ("json", "md", "sarif"):
+            raise StoreError("format must be json, md or sarif")
         self._check_root(create=False)
         path = self.root / run_id / f"report.{fmt}"
         if path.is_symlink() or not path.is_file():

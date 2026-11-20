@@ -20,9 +20,11 @@ from boundarycheck.engine import RunResult, run
 from boundarycheck.evidence import RunStore, StoreError, parse_age
 from boundarycheck.model import EgressViolation, Status, TransportUnavailable
 from boundarycheck.netcheck import AddressRefused, EgressPolicy, parse_target_url
+from boundarycheck.openapi import MAX_SPEC_BYTES, OpenApiError, import_openapi
 from boundarycheck.planner import plan
 from boundarycheck.redact import SecretLeakError
 from boundarycheck.report import to_json, to_markdown
+from boundarycheck.sarif import action_lines, to_sarif
 from boundarycheck.template import REMOTE_CONFIG, STARTER_CONFIG
 
 DEFAULT_RUNS = Path(".boundarycheck/runs")
@@ -81,6 +83,53 @@ def init(
     except OSError:
         _fail(f"could not write {output}")
     typer.echo(f"wrote {output}. Next: edit it, then 'boundarycheck validate --config {output}'.")
+
+
+@app.command(name="import-openapi")
+def import_openapi_cmd(
+    spec: Annotated[str, typer.Argument(help="An OpenAPI 3 document (JSON or YAML): a FILE path, never a URL.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Where to write the skeleton config.")] = Path(
+        "boundarycheck.yaml"
+    ),
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+) -> None:
+    """Write a SKELETON config from an OpenAPI document. It never writes your policy and never fetches anything."""
+    if spec.lower().startswith(("http://", "https://")):
+        _fail("give a file path: the importer reads one local file and never fetches a URL (download it yourself)")
+    path = Path(spec)
+    try:
+        if not path.is_file():
+            _fail("the OpenAPI path is not a readable file")
+        if path.stat().st_size > MAX_SPEC_BYTES:
+            _fail(f"the document is too large (limit {MAX_SPEC_BYTES // (1024 * 1024)} MiB)")
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_SPEC_BYTES + 1)
+    except OSError:
+        _fail("the OpenAPI file could not be read")
+    try:
+        result = import_openapi(raw)
+    except OpenApiError as exc:
+        _fail(str(exc))
+    try:
+        with output.open("w" if force else "x", encoding="utf-8") as handle:
+            handle.write(result.yaml_text)
+    except FileExistsError:
+        _fail(f"{output} already exists (use --force to overwrite it)")
+    except OSError:
+        _fail(f"could not write {output}")
+    typer.echo(
+        f"wrote {output}: {result.actions} action(s) from GET/HEAD operations; "
+        f"{result.skipped} write operation(s) not imported."
+    )
+    for note in result.notes[:10]:
+        typer.echo(f"  note: {note}")
+    if len(result.notes) > 10:
+        typer.echo(f"  ... and {len(result.notes) - 10} more notes inside the file")
+    typer.echo(
+        "This is a SKELETON. Edit it before running: the POLICY (who may see what) is yours to write, and every "
+        "capability and field is a placeholder that fails loudly until you do. Then: boundarycheck validate --config "
+        f"{output}"
+    )
 
 
 @app.command()
@@ -190,11 +239,13 @@ def _summarize(result: RunResult, saved: Path | None) -> None:
     typer.echo(f"exit code {result.exit_code}. Note: no_issue_observed does not mean the target is secure.")
 
 
-async def _run_fixture(cfg: Any, variant: str | None, flaws: list[str] | None, reads_only: bool) -> RunResult:
+async def _run_fixture(
+    cfg: Any, variant: str | None, flaws: list[str] | None, reads_only: bool
+) -> tuple[RunResult, list[str]]:
     from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
 
     async with LabFixtureTransport.open(cfg, variant=variant, flaws=flaws) as transport:
-        return await run(cfg, transport, reads_only=reads_only)
+        return await run(cfg, transport, reads_only=reads_only), []
 
 
 def _remote_gate(cfg: Any, acknowledged: bool, transport: str) -> None:
@@ -214,19 +265,21 @@ def _remote_gate(cfg: Any, acknowledged: bool, transport: str) -> None:
         _fail(str(exc))
 
 
-async def _run_live(cfg: Any, reads_only: bool) -> RunResult:
+async def _run_live(cfg: Any, reads_only: bool) -> tuple[RunResult, list[str]]:
     from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
 
     transport = LiveTransport.from_config(cfg, os.environ)  # the name is resolved here, once
     remote = cfg.scope.target.is_remote
     typer.echo(f"target: {transport.describe()}")
+    for reason in transport.notes:
+        typer.echo(f"note: {reason}")
     note: str | None = None
     if remote:
         auth = cfg.scope.authorization
         typer.echo(f"authorization: {authorization.describe(auth)}")
         note = authorization.attestation(auth, transport.describe())
     try:
-        return await run(cfg, transport, reads_only=reads_only, attestation=note)
+        return await run(cfg, transport, reads_only=reads_only, attestation=note), transport.secrets()
     finally:
         await transport.aclose()
 
@@ -251,6 +304,13 @@ def check_cmd(
             help="Lab adapter only: comma-separated flaw names (vulnerable variant).",
         ),
     ] = None,
+    sarif_uri: Annotated[
+        str | None,
+        typer.Option(
+            "--sarif-uri",
+            help="The config file's path as it appears in your repository, for report.sarif (default: its file name).",
+        ),
+    ] = None,
     ack_authorization: Annotated[
         bool,
         typer.Option(
@@ -273,7 +333,7 @@ def check_cmd(
     _remote_gate(cfg, ack_authorization, transport)
     flaws = [f.strip() for f in fixture_flaws.split(",") if f.strip()] if fixture_flaws is not None else None
     try:
-        result = asyncio.run(
+        result, used = asyncio.run(
             _run_fixture(cfg, fixture_variant, flaws, reads_only)
             if transport == "fixture"
             else _run_live(cfg, reads_only)
@@ -287,16 +347,31 @@ def check_cmd(
     saved: Path | None = None
     if not no_save:
         try:
-            saved = RunStore(runs_dir).save(result, to_json(result), to_markdown(result), _secrets_of(result, cfg))
+            saved = RunStore(runs_dir).save(
+                result,
+                to_json(result),
+                to_markdown(result),
+                [*used, *_env_secrets(cfg)],
+                sarif=_sarif_text(result, config, sarif_uri),
+            )
         except (StoreError, SecretLeakError) as exc:
             _fail(str(exc))
     _summarize(result, saved)
     raise typer.Exit(result.exit_code)
 
 
-def _secrets_of(result: RunResult, cfg: Any) -> list[str]:
-    """Every credential value used in this run (re-read from the environment for the live transport;
-    the fixture transport's tokens are scanned for inside the engine, which sees them first)."""
+def _sarif_text(result: RunResult, config: Path, sarif_uri: str | None) -> str:
+    """report.sarif: results point at the line of each action in the config file."""
+    try:
+        text = config.read_text(encoding="utf-8")[:262_144]
+    except OSError:
+        text = ""
+    return to_sarif(result, config_uri=sarif_uri if sarif_uri is not None else config.name, lines=action_lines(text))
+
+
+def _env_secrets(cfg: Any) -> list[str]:
+    """Credential values named by env variables (the leak guard also gets the transport's own list, which
+    covers keychain values; the fixture transport's tokens are scanned for inside the engine)."""
     return [
         os.environ[p.credential.env]
         for p in cfg.principals.values()
@@ -307,7 +382,7 @@ def _secrets_of(result: RunResult, cfg: Any) -> list[str]:
 @app.command()
 def report(
     run_id: Annotated[str, typer.Option("--run", help="Run id (see list-runs).")],
-    fmt: Annotated[str, typer.Option("--format", "-f", help="json or md.")] = "md",
+    fmt: Annotated[str, typer.Option("--format", "-f", help="json, md or sarif.")] = "md",
     runs_dir: Runs_ = DEFAULT_RUNS,
 ) -> None:
     """Print a stored report."""
@@ -331,6 +406,72 @@ def list_runs(runs_dir: Runs_ = DEFAULT_RUNS) -> None:
             f"{r['run_id']}  scope {r['scope_id']}  cases {r['total']}  exit {r['exit_code']}  "
             f"started {r['started_at']}"
         )
+
+
+keychain_app = typer.Typer(
+    help="Store credentials in the operating system's keychain (optional extra).", no_args_is_help=True
+)
+app.add_typer(keychain_app, name="keychain")
+Username_ = Annotated[
+    str, typer.Option("--username", "-u", help="The keychain entry's username (for example alice@acme).")
+]
+Service_ = Annotated[str, typer.Option("--service", help="The keychain service name.")]
+
+
+def _keychain_names(service: str, username: str) -> None:
+    import re  # noqa: PLC0415
+
+    from boundarycheck.config import KEYCHAIN_NAME  # noqa: PLC0415
+
+    if not (re.fullmatch(KEYCHAIN_NAME, service) and re.fullmatch(KEYCHAIN_NAME, username)):
+        _fail("the service and username are letters, digits and . _ @ + - only (at most 128 characters)")
+
+
+@keychain_app.command("set")
+def keychain_set(username: Username_, service: Service_ = "boundarycheck") -> None:
+    """Store a credential. The value is typed at a hidden prompt: it never touches a file or a command line."""
+    from boundarycheck import keychain  # noqa: PLC0415
+
+    _keychain_names(service, username)
+    try:
+        keychain.backend()  # refuse a plaintext or missing store BEFORE asking for a secret
+        first = typer.prompt("Value (hidden)", hide_input=True)
+        if first != typer.prompt("Again (hidden)", hide_input=True):
+            _fail("the two values do not match; nothing was stored")
+        keychain.set_value(service, username, first)
+    except keychain.KeychainError as exc:
+        _fail(str(exc))
+    typer.echo(
+        f"stored in the operating-system keychain (service '{service}', username '{username}'). "
+        "It was not shown or saved anywhere else."
+    )
+
+
+@keychain_app.command("check")
+def keychain_check(username: Username_, service: Service_ = "boundarycheck") -> None:
+    """Exit 0 if the entry exists, 1 if it does not. The value is never printed."""
+    from boundarycheck import keychain  # noqa: PLC0415
+
+    _keychain_names(service, username)
+    try:
+        present = keychain.exists(service, username)
+    except keychain.KeychainError as exc:
+        _fail(str(exc))
+    typer.echo("present" if present else "not found")
+    raise typer.Exit(0 if present else 1)
+
+
+@keychain_app.command("delete")
+def keychain_delete(username: Username_, service: Service_ = "boundarycheck") -> None:
+    """Remove an entry."""
+    from boundarycheck import keychain  # noqa: PLC0415
+
+    _keychain_names(service, username)
+    try:
+        keychain.delete(service, username)
+    except keychain.KeychainError as exc:
+        _fail(str(exc))
+    typer.echo("deleted")
 
 
 @app.command()

@@ -29,4 +29,10 @@ approval" says whether the owner confirmed it (Given), delegated it, or it is st
 | D-B22 | **Remote live: an `authorization` block with a required `not_after` (at most 366 days away) plus `--ack-authorization` on every run; the report says the declaration is not verified.** (design s4.2) | **Given** (2026-11-20: "I agree with the safety rules") |
 | D-B23 | **Remote live: reads only, never a body, no proxy support, one host.** (design s4.5, D-B16) | **Given** (2026-11-20: "I agree with the safety rules") |
 | D-B24 | **Remote live: default 2 requests per second, at most 20, a budget of 500.** (design s4.6) | **Given** (2026-11-20: "I agree with the safety rules") |
+| D-B25 | **An action may request the root path `/`.** Every other path rule is unchanged. | **Given** (2026-11-20: "Yes to all decisions") |
+| D-B26 | **Credential schemes: bearer (default), an API key in a named header (optional prefix), a named session cookie.** Forbidden header names, RFC 6265 cookie octets only, no keys in a query string, no login flow. (design s2) | **Given** (2026-11-20: "Yes to all decisions") (token handling) |
+| D-B27 | **OS-keychain credentials as an optional extra; real OS backends only (macOS, Windows, Secret Service, KWallet), read straight from the chosen backend, never a plaintext, file, null or fail backend; env XOR keychain.** (design s3) | **Given** (2026-11-20: "Yes to all decisions") (token handling) |
+| D-B28 | **SARIF 2.1.0: findings as results, every other non-clean case as a notification, no values or bodies, the location is the action's line in the config, and a privacy notice inside the file.** (design s4) | **Given** (2026-11-20: "Yes to all decisions") (reporting privacy) |
+| D-B29 | **OpenAPI import writes a skeleton only: untrusted input, local `$ref` only, nothing fetched, fail-loud placeholders, no remote `base_url`.** (design s5) | **Given** (2026-11-20: "Yes to all decisions") |
+| D-B30 | **Version 0.3.0 and the `keychain` extra (the `keyring` library).** | **Given** (2026-11-20: "Yes to all decisions") |
 

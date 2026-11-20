@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from boundarycheck.credentials import COOKIE_NAME, FORBIDDEN_HEADERS, HEADER_NAME, PREFIX, Scheme
 from boundarycheck.netcheck import (
     AddressRefused,
     NotLoopback,
@@ -44,7 +45,8 @@ IDENT_PATTERN: Final = r"^[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}$"
 PARAM_PATTERN: Final = r"^[a-z_][a-z0-9_]{0,63}$"
 ENV_PATTERN: Final = r"^[A-Z_][A-Z0-9_]{0,63}$"
 _SEGMENT: Final = r"(?:[A-Za-z0-9._~-]+|\{[a-z_][a-z0-9_]{0,63}\})"
-_PATH_RE: Final = re.compile(rf"^/{_SEGMENT}(?:/{_SEGMENT})*$")
+_PATH_RE: Final = re.compile(rf"^/(?:{_SEGMENT}(?:/{_SEGMENT})*)?$")  # "/" alone is the root path
+PATH_RE: Final = _PATH_RE  # the alphabet of a request path, shared with the OpenAPI importer
 _PARAM_RE: Final = re.compile(r"\{([a-z_][a-z0-9_]{0,63})\}")
 FIELD_PATH_PATTERN: Final = r"^[A-Za-z0-9_.\[\]-]{1,120}$"
 
@@ -63,6 +65,8 @@ class ConfigError(ValueError):
 class _StrictLoader(yaml.SafeLoader):
     """SafeLoader that refuses aliases, anchors, merge keys, duplicate keys and deep nesting."""
 
+    max_depth: int = MAX_DEPTH
+
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
         self._depth = 0
@@ -73,8 +77,8 @@ class _StrictLoader(yaml.SafeLoader):
         if getattr(self.peek_event(), "anchor", None) is not None:  # type: ignore[no-untyped-call]
             raise ConfigError("YAML anchors (and the aliases that use them) are not allowed")
         self._depth += 1
-        if self._depth > MAX_DEPTH:
-            raise ConfigError(f"the document is nested too deeply (more than {MAX_DEPTH} levels)")
+        if self._depth > self.max_depth:
+            raise ConfigError(f"the document is nested too deeply (more than {self.max_depth} levels)")
         try:
             return super().compose_node(parent, index)
         finally:
@@ -131,17 +135,60 @@ class _Model(BaseModel):
     )
 
 
+KEYCHAIN_NAME: Final = r"^[A-Za-z0-9._@+-]{1,128}$"
+KeychainName = Annotated[str, StringConstraints(pattern=KEYCHAIN_NAME)]
+
+
+class Keychain(_Model):
+    """A secret held in the operating system's keychain (docs/design-v0.3.md s3), named here, never stored."""
+
+    service: KeychainName = "boundarycheck"
+    username: KeychainName
+
+
 class Credential(_Model):
     """A principal's credential is NAMED here, never stored: an environment variable (live) and/or a
     fixture key (the in-process lab adapter mints its own tokens)."""
 
     env: EnvName | None = None
     fixture: Ident | None = None
+    keychain: Keychain | None = None
+    # How the value is sent (docs/design-v0.3.md s2): a bearer token (default), an API key in a named
+    # header, or a named session cookie. `in` is a Python keyword, hence the alias.
+    scheme: Scheme = Field(default="bearer", alias="in")
+    name: str | None = None
+    prefix: str | None = None
 
     @model_validator(mode="after")
-    def _names_something(self) -> Credential:
-        if self.env is None and self.fixture is None:
-            raise ValueError("a credential must name an environment variable (env) and/or a fixture key (fixture)")
+    def _names_something(self) -> Credential:  # noqa: PLR0912 - one flat list of independent rules
+        if self.env is None and self.fixture is None and self.keychain is None:
+            raise ValueError("a credential must name an environment variable (env), a keychain entry or a fixture key")
+        if self.env is not None and self.keychain is not None:
+            raise ValueError("a credential names an env variable or a keychain entry, not both")
+        if self.scheme == "bearer":
+            if self.name is not None or self.prefix is not None:
+                raise ValueError(
+                    "a bearer credential takes no name or prefix (they belong to in: header or in: cookie)"
+                )
+            return self
+        if self.env is None and self.keychain is None:
+            raise ValueError("in: header and in: cookie need an env variable or a keychain entry that holds the value")
+        if self.name is None:
+            raise ValueError(f"in: {self.scheme} needs a name (the header or cookie name)")
+        if self.scheme == "header":
+            if HEADER_NAME.fullmatch(self.name) is None:
+                raise ValueError("a header name is letters, digits and hyphens, at most 64 characters")
+            if self.name.lower() in FORBIDDEN_HEADERS:
+                raise ValueError(
+                    "this header name is not allowed: it changes how the request is framed or is set by the tool"
+                )
+            if self.prefix is not None and PREFIX.fullmatch(self.prefix) is None:
+                raise ValueError("a prefix is 1 to 32 printable ASCII characters")
+        else:
+            if COOKIE_NAME.fullmatch(self.name) is None:
+                raise ValueError("a cookie name is letters, digits, . _ and -, at most 64 characters")
+            if self.prefix is not None:
+                raise ValueError("a cookie credential takes no prefix")
         return self
 
 
@@ -238,7 +285,7 @@ class Action(_Model):
     @classmethod
     def _safe_path(cls, value: str) -> str:
         if len(value) > 256 or not _PATH_RE.fullmatch(value):
-            raise ValueError("path must be '/segment/{param}/...' using only letters, digits and . _ ~ -")
+            raise ValueError("path must be '/' or '/segment/{param}/...' using only letters, digits and . _ ~ -")
         if any(part in {".", ".."} for part in value.split("/")):
             raise ValueError("path must not contain '.' or '..' segments")
         return value
