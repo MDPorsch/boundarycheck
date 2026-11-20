@@ -1,8 +1,8 @@
 # v0.3: five features, and the rules they follow
 
-**Status: built on the branch `v0.3-features`, behind a draft pull request. Not merged, not released.**
-Two of the five change how credentials are held and what a report reveals. You told me to stop and
-review those before they ship, so the pull request waits for you (section 7).
+**Status: approved by the owner on 2026-11-20 ("Yes to all decisions": D-B25 to D-B30). Version 0.3.0.**
+Two of the five change how credentials are held and what a report reveals; the owner reviewed those
+before anything shipped (section 7).
 
 | # | Feature | Touches a review-gated area? |
 |---|---|---|
@@ -124,9 +124,9 @@ Not measured: the keychain against a real operating-system store (the tests use 
 accepted only by name), and the new credential schemes against a real remote API. Both need your machine or your
 target.
 
-## 7. Decisions I need from you
+## 7. Decisions (all approved on 2026-11-20)
 
-| ID | Decision | My recommendation |
+| ID | Decision | Recommendation (the owner approved all six) |
 |---|---|---|
 | D-B25 | Allow the root path `/` | yes |
 | D-B26 | Cookie and API-key credentials as in section 2 (no query keys, no login flow, forbidden header names) | yes |

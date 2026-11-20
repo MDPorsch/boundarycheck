@@ -2,9 +2,9 @@
 
 All notable changes are recorded here. The format follows Keep a Changelog; versions follow SemVer.
 
-## [0.3.0] - unreleased
+## [0.3.0] - 2026-11-20
 
-Five features (design: `docs/design-v0.3.md`; credential handling and SARIF privacy await the owner's review).
+Five features (design: `docs/design-v0.3.md`; approved by the owner as D-B25 to D-B30).
 
 ### Added
 - **Root path.** An action may request `/`.
