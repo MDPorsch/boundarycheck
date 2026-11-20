@@ -23,7 +23,7 @@ never look clean.
 | Role limits on read routes (BFLA): can a viewer reach an admin route? | Decide whether your policy is *right*: it judges the API against the policy you give it |
 | Hidden objects: does a forbidden object answer exactly like a missing one? | Prove an API is secure: `no_issue_observed` means one request matched the policy, nothing more |
 | Field exposure: does a response carry a field that role should not see? | Test timing channels, concurrency, rate limits or anything it was not told about |
-| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host (planned for v0.2: a scoped, HTTPS-only, allow-listed design) |
+| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host in the released version. A scoped, https-only, allow-listed remote mode is **proposed** on the `remote-live` branch ([design](docs/remote-live-design.md)) and awaits review |
 | Refused writes (fixture only): does a request the policy says must be refused still **change a row**, whatever status it returns? | Send a write the policy allows: that would test functionality, and it would change state |
 
 ## Try it in two minutes (no network, no credentials)
@@ -93,6 +93,20 @@ uv run boundarycheck list-runs ; uv run boundarycheck report --run RUN_ID --form
 The config holds **no secrets**: a principal names the environment variable its token comes from.
 The policy is the heart of it, so write it from your requirements, not from the code under test.
 [`examples/lab.yaml`](examples/lab.yaml) is a complete, commented example.
+
+### A remote target (proposed: on the `remote-live` branch, awaiting review)
+
+```bash
+uv run boundarycheck init --remote --output acme.yaml   # one https host, an authorization block, safe defaults
+$EDITOR acme.yaml                                       # the host (twice), your engagement reference, when it ends
+uv run boundarycheck preflight --config acme.yaml       # resolves the name, judges every address, sends NO request
+export BC_TOKEN_ALICE=...                               # TEST users' tokens, environment only
+uv run boundarycheck test --config acme.yaml --transport live --ack-authorization
+```
+
+It talks to the **one** host you declared, over verified TLS, to public addresses only unless you list a
+private range, at 2 requests per second by default, and its report says the authorization is your
+declaration and was not verified. Read the [design](docs/remote-live-design.md) before using it.
 
 ## Reading a result
 

@@ -1,6 +1,6 @@
 # Remote live mode: design for your review
 
-**Status: proposed, not merged.** You asked for live mode to "work outside localhost but still
+**Status: implemented on the branch `remote-live`, NOT merged and NOT released: it waits for your review.** You asked for live mode to "work outside localhost but still
 secure", for many external assessments. That changes **egress** (the tool will open connections to
 networks you do not control) and **token handling** (a test user's token will cross a network), both
 of which you told me to stop and review before shipping. So this is a design plus an implementation on
@@ -78,7 +78,8 @@ that could grow is a scanner.
 * A remote run needs the `authorization` block **and** `--ack-authorization` on the command line.
   The flag is the human saying "yes, now"; the block is what the report will quote. A config copied
   into CI does nothing remote without the flag.
-* The run refuses outside `not_before`..`not_after` (UTC).
+* The run refuses outside `not_before`..`not_after` (UTC), and refuses a `not_after` more than 366 days
+  away (an engagement is not forever); when both ends are given they may be at most 366 days apart.
 * The report header says: *"Remote run. Authorization was declared by the operator for engagement
   ACME-2026-114 (valid ...). The tool does not and cannot verify it."* It is attestation, not proof,
   and says so.
@@ -187,3 +188,15 @@ host: refused, token not sent there. The independence and mutation suites extend
 2. I merge only after you say so, then tag `v0.2.0`. A version with remote live is never published
    by me without that.
 3. `v0.1.0` (loopback only, M4 included) can be published first; it does not depend on any of this.
+
+## 10. Implementation status (on this branch, measured)
+
+| | |
+|---|---|
+| Tests | **656 pass** (the 479 of `main` plus 177 for this feature: the address policy, config validation, the transport against real TLS servers, the CLI and the report) |
+| Static | ruff and strict mypy clean; coverage 97%; the secret scan is clean |
+| Mutation check | **189 mutants, all killed** (3 survived the first run and exposed gaps in my tests: a host that is only valid as a URL host, a zone id on a public address, the default-port `Host` header; each is now tested) |
+| Real TLS | tested against throwaway servers on 127.0.0.1 with generated certificates (a good one, an untrusted authority, a wrong name, an expired certificate, a plaintext server, a private authority); in every refusal the server received **no request**, so no token was sent |
+| **Not tested** | against a real remote host on the Internet. Nothing here has ever left this machine. DNS, CDNs, real certificate chains and a real client network are untested |
+| **Needs you** | decisions D-B19 to D-B24 (section 8). Until you answer, this stays a draft pull request, unmerged and unreleased |
+

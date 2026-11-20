@@ -231,15 +231,14 @@ def test_loopback_base_urls_are_accepted(url: str) -> None:
     assert parse(data).scope.target.base_url is not None
 
 
-def test_the_refusal_of_a_remote_host_names_what_v0_2_will_require() -> None:
+def test_a_remote_host_without_the_full_declaration_names_what_is_required() -> None:
+    # v0.1 refused every non-loopback host ("loopback", "v0.2"); remote live mode replaced that pin:
+    # a remote host is accepted only when declared completely (tests/unit/test_remote_policy.py).
     data = mini()
     data["scope"]["target"]["base_url"] = "https://api.example.com"
-    _bad(dump(data), "loopback")
-    from boundarycheck.config import parse_config  # noqa: PLC0415
-
-    with pytest.raises(_err()) as info:
-        parse_config(dump(data))
-    assert "v0.2" in str(info.value)
+    _bad(dump(data), "allowed_hosts")
+    data["scope"]["target"]["base_url"] = "http://api.example.com"
+    _bad(dump(data), "https")
 
 
 @pytest.mark.parametrize(

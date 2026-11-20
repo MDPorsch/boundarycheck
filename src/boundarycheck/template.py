@@ -67,3 +67,45 @@ policy:
 redaction:
   mask_fields: []                         # e.g. [email, phone]: values are replaced before anything is stored
 """
+
+
+_LOOPBACK_HEADER = """\
+# Use it ONLY against a system you own or are authorized to assess. v0.1 is loopback-only and
+# read-only (GET/HEAD): point it at your own service running on this machine.
+"""
+_REMOTE_HEADER = """\
+# REMOTE TARGET. Use it ONLY against a system you are authorized to assess, for the engagement named
+# below. Reads only (GET/HEAD), https only, one host. The authorization block is YOUR declaration: the
+# tool enforces its window and cannot verify it. Check what a run would do without sending anything:
+#   boundarycheck preflight --config boundarycheck.yaml
+# then run it with the acknowledgement:   boundarycheck test ... --transport live --ack-authorization
+# Design and limits: docs/remote-live-design.md
+"""
+_LOOPBACK_SCOPE = """\
+scope:
+  id: my-first-check                      # names this assessment in every report
+  target:
+    label: my-service
+    base_url: http://127.0.0.1:8000       # loopback only in v0.1
+    request_budget: 500                   # hard stop on requests per run
+    rate_limit_rps: 10
+"""
+_REMOTE_SCOPE = """\
+scope:
+  id: my-assessment                       # names this assessment in every report
+  target:
+    label: my-service
+    base_url: https://api.staging.example.test    # EDIT: the ONE host this run may talk to (https only)
+    allowed_hosts: [api.staging.example.test]     # EDIT: the same host again (add :port if it is not 443)
+    # allowed_networks: [10.20.0.0/16]            # only if the target is on a private network you reach by VPN
+    # ca_bundle: ./client-ca.pem                  # only if the target uses a private certificate authority
+    request_budget: 500                   # hard stop on requests per run
+    rate_limit_rps: 2                     # at most 20 for a remote host
+  authorization:                          # YOUR declaration; the tool cannot verify it
+    engagement: "EDIT: your reference (a statement of work or a ticket)"
+    not_after: 1970-01-01T00:00:00Z       # EDIT: when the engagement ends. This placeholder is already past,
+                                          # so the template cannot run until you set a real, near date
+"""
+if _LOOPBACK_HEADER not in STARTER_CONFIG or _LOOPBACK_SCOPE not in STARTER_CONFIG:
+    raise RuntimeError("the starter template changed: update the remote variant")
+REMOTE_CONFIG = STARTER_CONFIG.replace(_LOOPBACK_HEADER, _REMOTE_HEADER).replace(_LOOPBACK_SCOPE, _REMOTE_SCOPE)

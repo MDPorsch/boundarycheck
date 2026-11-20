@@ -8,20 +8,22 @@ import os
 import sys
 import traceback
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
 import typer
 
-from boundarycheck import __version__
+from boundarycheck import __version__, authorization
 from boundarycheck.config import ConfigError, load_config
 from boundarycheck.engine import RunResult, run
 from boundarycheck.evidence import RunStore, StoreError, parse_age
 from boundarycheck.model import EgressViolation, Status, TransportUnavailable
+from boundarycheck.netcheck import AddressRefused, EgressPolicy, parse_target_url
 from boundarycheck.planner import plan
 from boundarycheck.redact import SecretLeakError
 from boundarycheck.report import to_json, to_markdown
-from boundarycheck.template import STARTER_CONFIG
+from boundarycheck.template import REMOTE_CONFIG, STARTER_CONFIG
 
 DEFAULT_RUNS = Path(".boundarycheck/runs")
 app = typer.Typer(
@@ -65,11 +67,15 @@ def init(
         "boundarycheck.yaml"
     ),
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+    remote: Annotated[
+        bool,
+        typer.Option("--remote", help="A starter for ONE remote https host, with the authorization block."),
+    ] = False,
 ) -> None:
     """Write an annotated, safe-by-default starter config."""
     try:
         with output.open("w" if force else "x", encoding="utf-8") as handle:
-            handle.write(STARTER_CONFIG)
+            handle.write(REMOTE_CONFIG if remote else STARTER_CONFIG)
     except FileExistsError:
         _fail(f"{output} already exists (use --force to overwrite it)")
     except OSError:
@@ -107,6 +113,58 @@ def plan_cmd(config: Config_) -> None:
     typer.echo(f"{len(cases)} requests planned{note}; none sent.")
 
 
+@app.command()
+def preflight(config: Config_) -> None:
+    """Check a remote config and show what a run would do. Resolves the name; sends NO request."""
+    from boundarycheck.transports.live import _system_resolver  # noqa: PLC0415
+
+    cfg = _load(config)
+    target = cfg.scope.target
+    if target.base_url is None or not target.is_remote:
+        typer.echo("ok: the target is loopback (or the in-process fixture): there is nothing remote to check.")
+        return
+    auth = cfg.scope.authorization
+    typer.echo(f"target: {target.base_url}  (allowed host: {target.allowed_hosts[0]})")
+    typer.echo(f"authorization: {authorization.describe(auth)}")
+    try:
+        authorization.check_window(auth, datetime.now(UTC))
+    except authorization.AuthorizationError as exc:
+        _fail(f"{exc}; nothing was resolved and nothing was sent")
+    typer.echo("authorization window: open")
+    _scheme, host, port, _remote = parse_target_url(target.base_url)
+    policy = EgressPolicy.remote(host=host, port=port, allowed_networks=target.allowed_networks)
+    try:
+        addresses = [host] if _is_literal(host) else _system_resolver(host)
+    except OSError:
+        _fail("the host name could not be resolved")
+    if not addresses:
+        _fail("the host name did not resolve to any address")
+    refused = 0
+    for address in sorted(addresses):
+        try:
+            policy.check(address)
+        except AddressRefused as exc:
+            refused += 1
+            typer.echo(f"  {address}: refused: {exc}")
+        else:
+            typer.echo(f"  {address}: acceptable")
+    rate = target.effective_rate_limit_rps
+    typer.echo(f"limits: {rate:g} requests per second, a budget of {target.request_budget} requests, GET and HEAD only")
+    if refused:
+        _fail(f"{refused} of {len(addresses)} address(es) are refused, so a run would send nothing")
+    typer.echo("ok: a run would connect only to the acceptable address(es) above. No request was sent.")
+
+
+def _is_literal(host: str) -> bool:
+    from boundarycheck.netcheck import parse_address  # noqa: PLC0415
+
+    try:
+        parse_address(host)
+    except AddressRefused:
+        return False
+    return True
+
+
 def _summarize(result: RunResult, saved: Path | None) -> None:
     counts = Counter(c.status.value for c in result.cases)
     typer.echo(f"boundarycheck {result.tool_version} | scope {result.scope_id} | transport {result.transport}")
@@ -139,12 +197,36 @@ async def _run_fixture(cfg: Any, variant: str | None, flaws: list[str] | None, r
         return await run(cfg, transport, reads_only=reads_only)
 
 
+def _remote_gate(cfg: Any, acknowledged: bool, transport: str) -> None:
+    """A remote run needs the declared authorization, its window and the per-run acknowledgement.
+    Checked BEFORE anything touches the network, not even a name lookup."""
+    target = cfg.scope.target
+    if transport != "live" or not target.is_remote:
+        return
+    if not acknowledged:
+        _fail(
+            f"{target.base_url} is a remote host: add --ack-authorization to confirm, for this run, that you "
+            "are authorized to assess it (the authorization block in the config is what the report will quote)"
+        )
+    try:
+        authorization.check_window(cfg.scope.authorization, datetime.now(UTC))
+    except authorization.AuthorizationError as exc:
+        _fail(str(exc))
+
+
 async def _run_live(cfg: Any, reads_only: bool) -> RunResult:
     from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
 
-    transport = LiveTransport.from_config(cfg, os.environ)
+    transport = LiveTransport.from_config(cfg, os.environ)  # the name is resolved here, once
+    remote = cfg.scope.target.is_remote
+    typer.echo(f"target: {transport.describe()}")
+    note: str | None = None
+    if remote:
+        auth = cfg.scope.authorization
+        typer.echo(f"authorization: {authorization.describe(auth)}")
+        note = authorization.attestation(auth, transport.describe())
     try:
-        return await run(cfg, transport, reads_only=reads_only)
+        return await run(cfg, transport, reads_only=reads_only, attestation=note)
     finally:
         await transport.aclose()
 
@@ -169,6 +251,13 @@ def check_cmd(
             help="Lab adapter only: comma-separated flaw names (vulnerable variant).",
         ),
     ] = None,
+    ack_authorization: Annotated[
+        bool,
+        typer.Option(
+            "--ack-authorization",
+            help="Remote targets only: confirm, for THIS run, that you are authorized to assess the host.",
+        ),
+    ] = False,
     reads_only: Annotated[
         bool,
         typer.Option(
@@ -181,6 +270,7 @@ def check_cmd(
     if transport not in ("fixture", "live"):
         _fail("--transport must be 'fixture' or 'live'")
     cfg = _load(config)
+    _remote_gate(cfg, ack_authorization, transport)
     flaws = [f.strip() for f in fixture_flaws.split(",") if f.strip()] if fixture_flaws is not None else None
     try:
         result = asyncio.run(

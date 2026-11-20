@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from tests.support import dump, mini, parse
+from tests.support import DELETE, dump, mini, parse, remote_mini
 
 pytestmark = pytest.mark.milestone("R1")
 
@@ -70,12 +70,15 @@ def test_a_public_address_needs_no_listing_but_a_listing_does_not_forbid_it() ->
     assert _check("8.8.8.8", ("10.0.0.0/8",)) is None
 
 
-@pytest.mark.parametrize("address", ["fe80::1%eth0", "fe80::1%1", "8.8.8.8%lo", "::1%lo"])
+@pytest.mark.parametrize("address", ["fe80::1%eth0", "fe80::1%1", "8.8.8.8%lo", "::1%lo", "2606:4700:4700::1111%eth0"])
 def test_a_zone_id_is_refused(address: str) -> None:
     assert _check(address, ("::1/128",)) is not None
 
 
-@pytest.mark.parametrize("address", ["", "localhost", "not-an-ip", "1.2.3", "1.2.3.4.5", "999.1.1.1", "0x7f.1", "2130706433", " 8.8.8.8", "8.8.8.8 "])
+@pytest.mark.parametrize(
+    "address",
+    ["", "localhost", "not-an-ip", "1.2.3", "1.2.3.4.5", "999.1.1.1", "0x7f.1", "2130706433", " 8.8.8.8", "8.8.8.8 "],
+)
 def test_anything_that_is_not_a_plain_ip_literal_is_refused(address: str) -> None:
     assert _check(address, ("127.0.0.0/8",)) is not None
 
@@ -89,28 +92,7 @@ def test_the_refusal_says_why_and_never_echoes_a_long_input() -> None:
 
 # --------------------------------------------------------------------------- the config ----
 def remote(**changes: Any) -> dict[str, Any]:
-    """`mini()` pointed at one remote host, fully declared."""
-    data = mini()
-    data["scope"]["target"].update(
-        {
-            "base_url": "https://api.staging.acme.example",
-            "allowed_hosts": ["api.staging.acme.example"],
-        }
-    )
-    data["scope"]["authorization"] = {"engagement": "ACME-2026-114", "not_after": "2030-01-01T00:00:00Z"}
-    for dotted, value in changes.items():
-        node = data
-        *parents, leaf = dotted.split("__")
-        for key in parents:
-            node = node[key]
-        if value is DELETE:
-            del node[leaf]
-        else:
-            node[leaf] = value
-    return data
-
-
-DELETE = object()
+    return remote_mini(**changes)
 
 
 def _bad(data: dict[str, Any], needle: str | None = None) -> None:
@@ -125,7 +107,9 @@ def _bad(data: dict[str, Any], needle: str | None = None) -> None:
 def test_a_fully_declared_remote_target_is_accepted() -> None:
     cfg = parse(remote())
     target = cfg.scope.target
-    assert target.base_url == "https://api.staging.acme.example" and target.allowed_hosts == ["api.staging.acme.example"]
+    assert target.base_url == "https://api.staging.acme.example" and target.allowed_hosts == [
+        "api.staging.acme.example"
+    ]
     assert cfg.scope.authorization is not None and cfg.scope.authorization.engagement == "ACME-2026-114"
     assert target.is_remote and target.effective_rate_limit_rps == 2.0  # the default for a remote host
 
@@ -170,16 +154,39 @@ def test_there_is_exactly_one_allowed_host() -> None:
     _bad(remote(scope__target__allowed_hosts=["api.staging.acme.example", "api.prod.acme.example"]), "exactly one")
 
 
-@pytest.mark.parametrize("host", ["*.acme.example", "*", "acme.*", "API.staging.acme.example", "api.staging.acme.example.", "api staging.acme.example", "münchen.example", "xn--a.example/x"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "*.acme.example",
+        "*",
+        "acme.*",
+        "API.staging.acme.example",
+        "api.staging.acme.example.",
+        "api staging.acme.example",
+        "münchen.example",
+        "xn--a.example/x",
+    ],
+)
 def test_the_allowed_host_is_an_exact_lowercase_ascii_name(host: str) -> None:
     _bad(remote(scope__target__allowed_hosts=[host]))
 
 
 def test_a_port_other_than_443_must_be_written_in_the_allowlist() -> None:
-    ok = parse(remote(scope__target__base_url="https://api.staging.acme.example:8443", scope__target__allowed_hosts=["api.staging.acme.example:8443"]))
+    ok = parse(
+        remote(
+            scope__target__base_url="https://api.staging.acme.example:8443",
+            scope__target__allowed_hosts=["api.staging.acme.example:8443"],
+        )
+    )
     assert ok.scope.target.allowed_hosts == ["api.staging.acme.example:8443"]
     _bad(remote(scope__target__base_url="https://api.staging.acme.example:8443"), "allowed_hosts")
-    _bad(remote(scope__target__base_url="https://api.staging.acme.example:443", scope__target__allowed_hosts=["api.staging.acme.example:8443"]), "allowed_hosts")
+    _bad(
+        remote(
+            scope__target__base_url="https://api.staging.acme.example:443",
+            scope__target__allowed_hosts=["api.staging.acme.example:8443"],
+        ),
+        "allowed_hosts",
+    )
 
 
 def test_the_default_port_may_be_written_either_way() -> None:
@@ -188,23 +195,70 @@ def test_the_default_port_may_be_written_either_way() -> None:
 
 
 def test_an_ip_literal_host_is_accepted_only_when_its_range_is_listed() -> None:
-    _bad(remote(scope__target__base_url="https://10.20.0.5", scope__target__allowed_hosts=["10.20.0.5"]), "allowed_networks")
-    ok = parse(remote(scope__target__base_url="https://10.20.0.5", scope__target__allowed_hosts=["10.20.0.5"], scope__target__allowed_networks=["10.20.0.0/16"]))
+    _bad(
+        remote(scope__target__base_url="https://10.20.0.5", scope__target__allowed_hosts=["10.20.0.5"]),
+        "allowed_networks",
+    )
+    ok = parse(
+        remote(
+            scope__target__base_url="https://10.20.0.5",
+            scope__target__allowed_hosts=["10.20.0.5"],
+            scope__target__allowed_networks=["10.20.0.0/16"],
+        )
+    )
     assert ok.scope.target.is_remote
-    _bad(remote(scope__target__base_url="https://169.254.169.254", scope__target__allowed_hosts=["169.254.169.254"]), "never")
-    _bad(remote(scope__target__base_url="https://[::ffff:8.8.8.8]", scope__target__allowed_hosts=["[::ffff:8.8.8.8]"]), "never")
+    _bad(
+        remote(scope__target__base_url="https://169.254.169.254", scope__target__allowed_hosts=["169.254.169.254"]),
+        "never",
+    )
+    _bad(
+        remote(scope__target__base_url="https://[::ffff:8.8.8.8]", scope__target__allowed_hosts=["[::ffff:8.8.8.8]"]),
+        "never",
+    )
 
 
 def test_a_public_ip_literal_is_accepted() -> None:
     parse(remote(scope__target__base_url="https://93.184.216.34", scope__target__allowed_hosts=["93.184.216.34"]))
 
 
-@pytest.mark.parametrize("network", ["169.254.0.0/16", "169.254.169.254/32", "0.0.0.0/0", "128.0.0.0/1", "::/0", "fe80::/10", "224.0.0.0/4", "240.0.0.0/4", "::ffff:0:0/96", "64:ff9b::/96", "2002::/16", "not-a-network", "10.0.0.0/33", "10.0.0.1"])
+@pytest.mark.parametrize(
+    "network",
+    [
+        "169.254.0.0/16",
+        "169.254.169.254/32",
+        "0.0.0.0/0",
+        "128.0.0.0/1",
+        "::/0",
+        "fe80::/10",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::ffff:0:0/96",
+        "64:ff9b::/96",
+        "2002::/16",
+        "not-a-network",
+        "10.0.0.0/33",
+        "10.0.0.1",
+        "10.0.0.1/8",
+        "10.0.0.0/8 ",
+    ],
+)
 def test_a_listed_range_that_includes_an_always_refused_address_is_refused_at_load(network: str) -> None:
     _bad(remote(scope__target__allowed_networks=[network]), "allowed_networks")
 
 
-@pytest.mark.parametrize("network", ["10.20.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "127.0.0.0/8", "10.20.0.7/32"])
+@pytest.mark.parametrize(
+    "network",
+    [
+        "10.20.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+        "127.0.0.0/8",
+        "10.20.0.7/32",
+    ],
+)
 def test_a_listed_private_range_is_accepted(network: str) -> None:
     assert parse(remote(scope__target__allowed_networks=[network])).scope.target.allowed_networks == [network]
 
@@ -218,7 +272,9 @@ def test_a_remote_target_needs_an_authorization_block() -> None:
     _bad(remote(scope__authorization=DELETE), "authorization")
 
 
-@pytest.mark.parametrize("engagement", ["", " ", "x" * 121, "line\nbreak", "tab\there", "\x00", "esc\x1b[0m", "bidi‮"])
+@pytest.mark.parametrize(
+    "engagement", ["", " ", "x" * 121, "line\nbreak", "tab\there", "\x00", "esc\x1b[0m", "bidi" + chr(0x202E)]
+)
 def test_the_engagement_reference_is_short_plain_text(engagement: str) -> None:
     _bad(remote(scope__authorization__engagement=engagement))
 
@@ -256,3 +312,13 @@ def test_a_remote_url_in_a_loopback_style_config_is_still_refused_without_the_de
     data = mini()
     data["scope"]["target"]["base_url"] = "https://api.staging.acme.example"
     _bad(data, "allowed_hosts")
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["*.acme.example", "api_staging.acme.example", "api.acme.example.", "-api.acme.example", "api-.acme.example"],
+)
+def test_the_same_odd_host_written_in_both_places_is_still_refused(host: str) -> None:
+    """The format of `allowed_hosts` is checked on its own, not only by comparing it with the URL: a URL
+    can carry a host that no DNS name may be (a wildcard, an underscore, a trailing dot)."""
+    _bad(remote(scope__target__base_url=f"https://{host}", scope__target__allowed_hosts=[host]), "allowed_hosts")

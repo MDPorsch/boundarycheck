@@ -400,3 +400,26 @@ def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) ->
         return tweak(case, obs) if tweak else obs
 
     return respond
+
+
+DELETE: Any = object()
+
+
+def remote_mini(**changes: Any) -> dict[str, Any]:
+    """`mini()` pointed at one remote host and fully declared. `a__b__c=value` sets a nested key and
+    `a__b__c=DELETE` removes it."""
+    data = mini()
+    data["scope"]["target"].update(
+        {"base_url": "https://api.staging.acme.example", "allowed_hosts": ["api.staging.acme.example"]}
+    )
+    data["scope"]["authorization"] = {"engagement": "ACME-2026-114", "not_after": "2030-01-01T00:00:00Z"}
+    for dotted, value in changes.items():
+        node = data
+        *parents, leaf = dotted.split("__")
+        for key in parents:
+            node = node[key]
+        if value is DELETE:
+            del node[leaf]
+        else:
+            node[leaf] = value
+    return data

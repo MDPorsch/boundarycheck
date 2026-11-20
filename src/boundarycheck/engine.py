@@ -150,13 +150,14 @@ def _body(case: BoundaryCase) -> bytes | None:
     return json.dumps(case.action.body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-async def run(  # noqa: PLR0912, PLR0915 - the per-case loop is one straight sequence of guarded steps
+async def run(  # noqa: PLR0912, PLR0913, PLR0915 - the per-case loop is one straight sequence of guarded steps
     config: Config,
     transport: Transport,
     *,
     run_id: str | None = None,
     now: datetime | None = None,
     reads_only: bool = False,
+    attestation: str | None = None,
 ) -> RunResult:
     started = now or datetime.now(UTC)
     planned = plan(config)
@@ -284,7 +285,8 @@ async def run(  # noqa: PLR0912, PLR0915 - the per-case loop is one straight seq
         run_id=run_id or new_run_id(started), tool_version=__version__, scope_id=config.scope.id,
         target_label=config.scope.target.label, transport=transport.name,
         started_at=_iso(started), finished_at=_iso(finished),
-        attestation=ATTESTATION_FIXTURE if transport.name.startswith("fixture") else ATTESTATION_LIVE,
+        attestation=attestation
+        or (ATTESTATION_FIXTURE if transport.name.startswith("fixture") else ATTESTATION_LIVE),
         cases=ordered + concealment, limitations=[*STATIC_LIMITATIONS, *limitations], evidence=evidence,
     )  # fmt: skip
 
