@@ -1,0 +1,104 @@
+[project]
+name = "boundarycheck"
+version = "0.1.0.dev0"
+description = "Check that an API enforces the authorization boundaries you declare: tenant isolation, roles, hidden objects and field exposure, compared against an independent policy."
+readme = "README.md"
+authors = [{ name = "MDPorsch" }]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+keywords = ["security", "authorization", "BOLA", "BFLA", "OWASP", "API security", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+requires-python = ">=3.13,<3.14"
+# Lower bounds = versions resolved on 2026-11-19; upper bounds stop silent major upgrades.
+# Exact, hash-pinned versions live in uv.lock (the source of truth).
+dependencies = [
+    "httpx>=0.28.1,<1",
+    "pydantic>=2.14.4,<3",
+    "pyyaml>=6.0.3,<7",
+    "typer>=0.29.2,<1",
+]
+
+[project.scripts]
+boundarycheck = "boundarycheck.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/MDPorsch/boundarycheck"
+Source = "https://github.com/MDPorsch/boundarycheck"
+Issues = "https://github.com/MDPorsch/boundarycheck/issues"
+Security = "https://github.com/MDPorsch/boundarycheck/security/policy"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170.15,<7",
+    "mypy>=2.4.1,<3",
+    "pip-audit>=2.10.1,<3",
+    "pytest>=9.2.0,<10",
+    "pytest-asyncio>=1.5.0,<2",
+    "pytest-cov>=7.1.0,<8",
+    "ruff>=0.17.6,<1",
+    "types-pyyaml>=6.0.12",
+    # The reference target. A git submodule at lab/, installed EDITABLE and ONLY for development:
+    # it is not a runtime dependency, so installing boundarycheck never installs the lab (and never
+    # the deliberately vulnerable variant, which the lab's own wheel excludes).
+    "tenant-boundary-lab[lab]",
+]
+
+[tool.uv.sources]
+tenant-boundary-lab = { path = "lab", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "boundarycheck"
+
+# ---------------------------------------------------------------- pytest ----
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "milestone(name): the slice (S1..S4) that must make this test pass; a red test is never skipped or xfailed",
+]
+
+# ------------------------------------------------------------------ ruff ----
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PT", "ASYNC", "T20", "PL"]
+ignore = ["PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311", "S104", "S108", "PLR0913", "PLR0915"]
+"tools/**" = ["E501", "PLR0913", "T201", "S603", "S607"]
+"src/boundarycheck/cli.py" = ["T201"]
+
+# ------------------------------------------------------------------ mypy ----
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+# -------------------------------------------------------------- coverage ----
+[tool.coverage.run]
+branch = true
+source = ["boundarycheck"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

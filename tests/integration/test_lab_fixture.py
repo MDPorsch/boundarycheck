@@ -1,0 +1,162 @@
+"""S1 + S2 acceptance: the product judged against the reference lab.
+
+The patched lab must be clean; each deliberately broken variant must be detected, and with exactly
+one flaw on only that flaw's rule families may fire (attribution). All requests are reads."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import pytest
+import yaml
+
+from tests.support import EXAMPLE
+
+pytestmark = pytest.mark.milestone("S2")
+
+
+async def _lab(variant: str = "patched", flaws: tuple[str, ...] = (), data: dict[str, Any] | None = None) -> Any:
+    from boundarycheck.config import load_config, parse_config  # noqa: PLC0415
+    from boundarycheck.engine import run  # noqa: PLC0415
+    from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
+
+    cfg = parse_config(yaml.safe_dump(data, sort_keys=False)) if data else load_config(EXAMPLE)
+    async with LabFixtureTransport.open(cfg, variant=variant, flaws=flaws) as transport:
+        return await run(cfg, transport)
+
+
+def _findings(result: Any) -> dict[str, Any]:
+    return {c.key: c for c in result.cases if c.status.value == "finding_candidate"}
+
+
+def _summary(result: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for c in result.cases:
+        counts[c.status.value] = counts.get(c.status.value, 0) + 1
+    return counts
+
+
+async def test_the_patched_lab_is_clean() -> None:
+    result = await _lab()
+    assert _summary(result) == {"no_issue_observed": len(result.cases)}, [(c.key, c.status.value, c.detail) for c in result.cases if c.status.value != "no_issue_observed"][:5]
+    assert len(result.cases) >= 240 and result.exit_code == 0
+    assert result.transport == "fixture:tenant-boundary-lab:patched"
+
+
+async def test_the_vulnerable_lab_with_every_flaw_off_is_clean_too() -> None:
+    result = await _lab("vulnerable", ())
+    assert result.exit_code == 0, [(c.key, c.detail) for c in result.cases if c.status.value != "no_issue_observed"][:5]
+
+
+SINGLE = {
+    "TENANT_PREDICATE_OMITTED": (
+        {"bob:project.read:PB1", "bob:project.list:tenant-B", "bob:invoice.read:IB1", "bob:invoice.read.nested:IB1"},
+        {"BC-TENANT-01"},
+    ),
+    "ROLE_CHECK_MISSING": ({"bob:contact.private.read:PA1"}, {"BC-ROLE-01"}),
+    "PRIVATE_PROPERTY_SERIALIZED": ({"bob:project.read:PA1", "alice:project.read:PA1"}, {"BC-FIELDS-01"}),
+    "MARKET_BOUNDARY_OMITTED": (
+        {"alice:project.read:PA2", "alice:invoice.read:IA2", "alice:contact.private.read:PA2", "alice:project.list:tenant-A"},
+        {"BC-SCOPE-01", "BC-LIST-01"},
+    ),
+}
+
+
+@pytest.mark.parametrize("flaw", sorted(SINGLE))
+async def test_each_flaw_is_detected_and_only_its_own_rule_families_fire(flaw: str) -> None:
+    must_find, allowed_rules = SINGLE[flaw]
+    result = await _lab("vulnerable", (flaw,))
+    found = _findings(result)
+    assert result.exit_code == 1
+    assert must_find <= set(found), sorted(must_find - set(found))
+    assert {c.rule_id for c in found.values()} <= allowed_rules, {c.rule_id for c in found.values()} - allowed_rules
+    # nothing else went wrong: every non-finding case is clean
+    assert {c.status.value for c in result.cases if c.key not in found} == {"no_issue_observed"}
+
+
+async def test_the_private_property_finding_names_the_field_never_the_value() -> None:
+    result = await _lab("vulnerable", ("PRIVATE_PROPERTY_SERIALIZED",))
+    detail = _findings(result)["bob:project.read:PA1"].detail
+    assert "contacts[].email_private" in detail and "SENTINEL" not in detail
+    assert "SENTINEL" not in json.dumps(result.evidence)  # masked by redaction.mask_fields
+
+
+async def test_the_market_flaw_is_found_in_the_list_total_as_well_as_in_the_item() -> None:
+    result = await _lab("vulnerable", ("MARKET_BOUNDARY_OMITTED",))
+    assert "BC-LIST-01" in {c.rule_id for c in _findings(result).values()}
+
+
+async def test_all_four_flaws_together_trip_every_rule_family() -> None:
+    from tests.support_lab import ALL_FLAWS  # noqa: PLC0415
+
+    result = await _lab("vulnerable", ALL_FLAWS)
+    assert result.exit_code == 1
+    assert {"BC-TENANT-01", "BC-ROLE-01", "BC-FIELDS-01", "BC-SCOPE-01", "BC-LIST-01"} <= {c.rule_id for c in _findings(result).values()}
+
+
+async def test_a_hidden_market_object_is_indistinguishable_from_a_missing_one_on_the_patched_lab() -> None:
+    result = await _lab()
+    conceal = [c for c in result.cases if c.rule_id == "BC-CONCEAL-01"]
+    assert len(conceal) >= 20 and {c.status.value for c in conceal} == {"no_issue_observed"}
+
+
+async def test_the_fixture_run_is_reproducible() -> None:
+    from boundarycheck.report import to_json  # noqa: PLC0415
+
+    def scrub(text: str) -> dict[str, Any]:
+        doc = json.loads(text)
+        for key in ("run_id", "started_at", "finished_at"):
+            doc.pop(key, None)
+        for case in doc["cases"]:
+            case.pop("observed_at", None)
+        return doc
+
+    assert scrub(to_json(await _lab())) == scrub(to_json(await _lab()))
+
+
+async def test_no_credential_reaches_the_report_or_the_evidence() -> None:
+    from boundarycheck.config import load_config  # noqa: PLC0415
+    from boundarycheck.engine import run  # noqa: PLC0415
+    from boundarycheck.report import to_json, to_markdown  # noqa: PLC0415
+    from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
+
+    cfg = load_config(EXAMPLE)
+    async with LabFixtureTransport.open(cfg, variant="patched", flaws=()) as transport:
+        secrets = transport.secrets()
+        result = await run(cfg, transport)
+    assert len(secrets) == 7 and all(len(s) > 40 for s in secrets)
+    blob = to_json(result) + to_markdown(result) + json.dumps(result.evidence)
+    assert not [s for s in secrets if s in blob]
+
+
+# ---------------------------------------------------- the two documented limit cases ----
+def _example() -> dict[str, Any]:
+    loaded: dict[str, Any] = yaml.safe_load(EXAMPLE.read_text())
+    return loaded
+
+
+async def test_documented_false_positive_a_wrong_policy_is_reported_as_a_finding_candidate() -> None:
+    """The tool judges the target against the policy it was GIVEN. A policy that is wrong (here:
+    it says viewers may read private contacts) makes a correct target look broken. That is why a
+    finding is a *candidate* that needs review, and why `confidence` is never `high`."""
+    data = _example()
+    data["policy"]["capabilities"]["contact.private.read"] = ["viewer", "editor", "admin", "owner"]
+    result = await _lab(data=data)
+    found = _findings(result)
+    assert result.exit_code == 1 and "bob:contact.private.read:PA1" in found
+    assert {c.rule_id for c in found.values()} == {"BC-ACCESS-01"} and {c.severity for c in found.values()} == {"low"}
+    assert all("fails closed" in c.detail for c in found.values())
+
+
+async def test_documented_inconclusive_a_response_the_tool_cannot_map_is_never_clean() -> None:
+    """The lab answers 422 for a path id that is not a UUID. That status maps to no decision, so
+    those cases are inconclusive and the run cannot exit 0."""
+    data = _example()
+    for res in data["resources"]:
+        if res["key"] == "project-missing":
+            res["ids"]["project_id"] = "not-a-uuid"
+    result = await _lab(data=data)
+    inconclusive = [c for c in result.cases if c.status.value == "inconclusive"]
+    assert inconclusive and all(c.resource == "project-missing" for c in inconclusive)
+    assert result.exit_code == 2

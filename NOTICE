@@ -1,0 +1,7 @@
+boundarycheck
+Copyright 2026 MDPorsch
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+boundarycheck is an authorization-testing tool. Use it only against systems you own or are
+explicitly authorized to assess. It is provided "AS IS", without warranty of any kind.
