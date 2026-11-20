@@ -46,6 +46,7 @@ PARAM_PATTERN: Final = r"^[a-z_][a-z0-9_]{0,63}$"
 ENV_PATTERN: Final = r"^[A-Z_][A-Z0-9_]{0,63}$"
 _SEGMENT: Final = r"(?:[A-Za-z0-9._~-]+|\{[a-z_][a-z0-9_]{0,63}\})"
 _PATH_RE: Final = re.compile(rf"^/(?:{_SEGMENT}(?:/{_SEGMENT})*)?$")  # "/" alone is the root path
+PATH_RE: Final = _PATH_RE  # the alphabet of a request path, shared with the OpenAPI importer
 _PARAM_RE: Final = re.compile(r"\{([a-z_][a-z0-9_]{0,63})\}")
 FIELD_PATH_PATTERN: Final = r"^[A-Za-z0-9_.\[\]-]{1,120}$"
 
@@ -64,6 +65,8 @@ class ConfigError(ValueError):
 class _StrictLoader(yaml.SafeLoader):
     """SafeLoader that refuses aliases, anchors, merge keys, duplicate keys and deep nesting."""
 
+    max_depth: int = MAX_DEPTH
+
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
         self._depth = 0
@@ -74,8 +77,8 @@ class _StrictLoader(yaml.SafeLoader):
         if getattr(self.peek_event(), "anchor", None) is not None:  # type: ignore[no-untyped-call]
             raise ConfigError("YAML anchors (and the aliases that use them) are not allowed")
         self._depth += 1
-        if self._depth > MAX_DEPTH:
-            raise ConfigError(f"the document is nested too deeply (more than {MAX_DEPTH} levels)")
+        if self._depth > self.max_depth:
+            raise ConfigError(f"the document is nested too deeply (more than {self.max_depth} levels)")
         try:
             return super().compose_node(parent, index)
         finally:

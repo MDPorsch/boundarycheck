@@ -96,6 +96,7 @@ ignore = ["PLR2004"]
 "tools/**" = ["E501", "PLR0913", "T201", "S603", "S607"]
 "src/boundarycheck/cli.py" = ["T201", "PLR0913", "PLR0917"]  # a CLI command has one parameter per option
 "src/boundarycheck/sarif.py" = ["E501"]  # the rule catalogue is prose
+"src/boundarycheck/openapi.py" = ["E501"]  # long messages and the config skeleton
 
 # ------------------------------------------------------------------ mypy ----
 [tool.mypy]

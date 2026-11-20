@@ -32,7 +32,18 @@ def _validate(text: str) -> dict[str, Any]:
 
 
 def _flawed(tmp_path: Path, *extra: str) -> Path:
-    out = _invoke("test", "--config", str(VULN_EXAMPLE), "--transport", "fixture", "--fixture-flaws", "ROLE_CHECK_MISSING", "--runs-dir", str(tmp_path / "runs"), *extra)
+    out = _invoke(
+        "test",
+        "--config",
+        str(VULN_EXAMPLE),
+        "--transport",
+        "fixture",
+        "--fixture-flaws",
+        "ROLE_CHECK_MISSING",
+        "--runs-dir",
+        str(tmp_path / "runs"),
+        *extra,
+    )
     assert out.exit_code == 1, out.output
     return next((tmp_path / "runs").iterdir())
 
@@ -71,7 +82,9 @@ def test_an_unknown_report_format_names_sarif_among_the_choices(tmp_path: Path) 
     assert out.exit_code == 2 and "sarif" in out.output
 
 
-def test_the_config_path_in_the_file_is_the_file_name_for_an_absolute_path_and_sarif_uri_overrides_it(tmp_path: Path) -> None:
+def test_the_config_path_in_the_file_is_the_file_name_for_an_absolute_path_and_sarif_uri_overrides_it(
+    tmp_path: Path,
+) -> None:
     default = _validate((_flawed(tmp_path) / "report.sarif").read_text())
     assert default["runs"][0]["artifacts"][0]["location"]["uri"] == "lab-vulnerable.yaml"
     second = tmp_path / "again"
@@ -94,5 +107,7 @@ def test_a_clean_run_is_valid_sarif_with_no_results_and_the_notice(tmp_path: Pat
 
 
 def test_no_save_writes_no_sarif(tmp_path: Path) -> None:
-    _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--no-save", "--runs-dir", str(tmp_path / "runs"))
+    _invoke(
+        "test", "--config", str(EXAMPLE), "--transport", "fixture", "--no-save", "--runs-dir", str(tmp_path / "runs")
+    )
     assert not (tmp_path / "runs").exists()
