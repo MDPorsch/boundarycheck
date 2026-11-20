@@ -44,7 +44,7 @@ IDENT_PATTERN: Final = r"^[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}$"
 PARAM_PATTERN: Final = r"^[a-z_][a-z0-9_]{0,63}$"
 ENV_PATTERN: Final = r"^[A-Z_][A-Z0-9_]{0,63}$"
 _SEGMENT: Final = r"(?:[A-Za-z0-9._~-]+|\{[a-z_][a-z0-9_]{0,63}\})"
-_PATH_RE: Final = re.compile(rf"^/{_SEGMENT}(?:/{_SEGMENT})*$")
+_PATH_RE: Final = re.compile(rf"^/(?:{_SEGMENT}(?:/{_SEGMENT})*)?$")  # "/" alone is the root path
 _PARAM_RE: Final = re.compile(r"\{([a-z_][a-z0-9_]{0,63})\}")
 FIELD_PATH_PATTERN: Final = r"^[A-Za-z0-9_.\[\]-]{1,120}$"
 
@@ -238,7 +238,7 @@ class Action(_Model):
     @classmethod
     def _safe_path(cls, value: str) -> str:
         if len(value) > 256 or not _PATH_RE.fullmatch(value):
-            raise ValueError("path must be '/segment/{param}/...' using only letters, digits and . _ ~ -")
+            raise ValueError("path must be '/' or '/segment/{param}/...' using only letters, digits and . _ ~ -")
         if any(part in {".", ".."} for part in value.split("/")):
             raise ValueError("path must not contain '.' or '..' segments")
         return value
