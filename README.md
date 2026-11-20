@@ -29,13 +29,14 @@ never look clean.
 ## Install
 
 ```bash
-pipx install boundarycheck          # once release 0.1.0 is on PyPI (see below)
+pipx install boundarycheck          # or: uv tool install boundarycheck
+boundarycheck --version             # 0.1.0
 ```
 
-PyPI publication goes through a protected release workflow that needs the owner's approval
-([docs/releasing.md](docs/releasing.md)); until <https://pypi.org/project/boundarycheck/> shows 0.1.0,
-install from source as in the next section. A wheel install validates configs, plans, and runs
-`--transport live` against loopback; the `fixture` transport and the examples need a source checkout.
+Published on PyPI as [`boundarycheck`](https://pypi.org/project/boundarycheck/) through a protected
+release workflow with signed provenance ([docs/releasing.md](docs/releasing.md)). A PyPI install validates
+configs, plans, and runs `--transport live` against loopback; the `fixture` transport and the examples need
+a source checkout, as in the next section.
 
 ## Try it in two minutes (no network, no credentials)
 
