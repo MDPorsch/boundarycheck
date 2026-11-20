@@ -141,5 +141,5 @@ source checkout and says so clearly if it is missing.
 
 ## Licence
 
-[Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). The licence choice is recorded as D-B10 and awaits the
-owner's confirmation.
+[Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). The licence choice is recorded as D-B10 and was confirmed by the
+owner.
