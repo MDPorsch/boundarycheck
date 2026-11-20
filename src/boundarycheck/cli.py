@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import traceback
@@ -94,11 +95,16 @@ def plan_cmd(config: Config_) -> None:
     cfg = _load(config)
     cases = plan(cfg)
     for c in cases:
+        body = ""
+        if c.action.body is not None:  # the presence and size of a body, never its content
+            body = f" [JSON body, {len(json.dumps(c.action.body, separators=(',', ':')))} bytes]"
         typer.echo(
-            f"{c.id} {c.action.method} {c.path} as {c.principal or 'anonymous'} "
+            f"{c.id} {c.action.method} {c.path}{body} as {c.principal or 'anonymous'} "
             f"-> expect {c.expected.outcome.value} ({c.expected.reason})"
         )
-    typer.echo(f"{len(cases)} requests planned; none sent.")
+    writes = sum(1 for c in cases if c.action.is_write)
+    note = f" ({writes} are writes: fixture transport only)" if writes else ""
+    typer.echo(f"{len(cases)} requests planned{note}; none sent.")
 
 
 def _summarize(result: RunResult, saved: Path | None) -> None:
@@ -118,24 +124,27 @@ def _summarize(result: RunResult, saved: Path | None) -> None:
         key=lambda kv: kv[0].value,
     ):
         typer.echo(f"  {status.value}: {len(group)} (first: {group[0].key}: {group[0].detail})")
+    for note in result.limitations:
+        if "--reads-only" in note or "not exercised" in note:
+            typer.echo(f"  note: {note}")
     if saved is not None:
         typer.echo(f"run {result.run_id} saved to {saved}")
     typer.echo(f"exit code {result.exit_code}. Note: no_issue_observed does not mean the target is secure.")
 
 
-async def _run_fixture(cfg: Any, variant: str | None, flaws: list[str] | None) -> RunResult:
+async def _run_fixture(cfg: Any, variant: str | None, flaws: list[str] | None, reads_only: bool) -> RunResult:
     from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
 
     async with LabFixtureTransport.open(cfg, variant=variant, flaws=flaws) as transport:
-        return await run(cfg, transport)
+        return await run(cfg, transport, reads_only=reads_only)
 
 
-async def _run_live(cfg: Any) -> RunResult:
+async def _run_live(cfg: Any, reads_only: bool) -> RunResult:
     from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
 
     transport = LiveTransport.from_config(cfg, os.environ)
     try:
-        return await run(cfg, transport)
+        return await run(cfg, transport, reads_only=reads_only)
     finally:
         await transport.aclose()
 
@@ -160,6 +169,13 @@ def check_cmd(
             help="Lab adapter only: comma-separated flaw names (vulnerable variant).",
         ),
     ] = None,
+    reads_only: Annotated[
+        bool,
+        typer.Option(
+            "--reads-only",
+            help="Leave the declared write checks out (they need the fixture's state diff). The report says so.",
+        ),
+    ] = False,
 ) -> None:
     """Run the checks and judge every result against the declared policy."""
     if transport not in ("fixture", "live"):
@@ -167,7 +183,11 @@ def check_cmd(
     cfg = _load(config)
     flaws = [f.strip() for f in fixture_flaws.split(",") if f.strip()] if fixture_flaws is not None else None
     try:
-        result = asyncio.run(_run_fixture(cfg, fixture_variant, flaws) if transport == "fixture" else _run_live(cfg))
+        result = asyncio.run(
+            _run_fixture(cfg, fixture_variant, flaws, reads_only)
+            if transport == "fixture"
+            else _run_live(cfg, reads_only)
+        )
     except (TransportUnavailable, EgressViolation) as exc:
         _fail(str(exc))
     except Exception as exc:

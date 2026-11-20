@@ -8,6 +8,11 @@
 #   boundarycheck plan     --config examples/lab.yaml        # every request, nothing is sent
 #   boundarycheck test     --config examples/lab.yaml --transport fixture
 #
+# WRITE CHECKS (project.write, project.create, member.role.write). They run on the in-process fixture
+# only, send ONLY requests the policy says must be refused, and are judged by a snapshot diff of the
+# lab's database: a refusal that still changed a row is BC-MUTATION-01 whatever its status code. A live
+# target cannot report its state, so use --reads-only there (the report says the writes were left out).
+#
 # All data is synthetic. There are NO secrets in this file: credentials come from the fixture
 # transport (minted in memory per run) or from environment variables (live transport).
 version: 1
@@ -62,6 +67,9 @@ resources:
   - {key: IA2, kind: invoice, tenant: A, attributes: {market: US}, ids: {invoice_id: "60000000-0000-4000-8000-000000000002", project_id: "50000000-0000-4000-8000-000000000002"}}
   - {key: IB1, kind: invoice, tenant: B, attributes: {market: US}, ids: {invoice_id: "60000000-0000-4000-8000-000000000003", project_id: "50000000-0000-4000-8000-000000000003"}}
   - {key: invoice-missing, kind: invoice, exists: false, ids: {invoice_id: "60000000-0000-4000-8000-0000000000ff", project_id: "50000000-0000-4000-8000-000000000001"}}
+  # memberships (the target of the role-change route: the tenant and the member whose role would change)
+  - {key: member-A-bob,  kind: membership, tenant: A, ids: {tenant_id: "20000000-0000-4000-8000-000000000001", principal_id: "10000000-0000-4000-8000-000000000002"}}
+  - {key: member-B-dave, kind: membership, tenant: B, ids: {tenant_id: "20000000-0000-4000-8000-000000000002", principal_id: "10000000-0000-4000-8000-000000000004"}}
 
 actions:
   - {id: tenant.context.read, method: GET, path: "/v1/tenants/{tenant_id}/me",        resource_kind: tenant, surface: tenant.context}
@@ -72,6 +80,10 @@ actions:
   - {id: contact.private.read, method: GET, path: "/v1/projects/{project_id}/contacts", resource_kind: project, surface: contacts.private, page: true}
   - {id: invoice.read,        method: GET, path: "/v1/invoices/{invoice_id}",         resource_kind: invoice, surface: invoice.detail}
   - {id: invoice.read.nested, method: GET, path: "/v1/projects/{project_id}/invoices/{invoice_id}", resource_kind: invoice, surface: invoice.detail, capability: invoice.read}
+  # writes: static, valid bodies, so that a skipped check would let the write through (never an invalid body that a validator rejects first)
+  - {id: project.write,       method: PATCH, path: "/v1/projects/{project_id}", resource_kind: project, surface: project.detail, body: {title: "boundarycheck probe", row_version: 1}}
+  - {id: project.create,      method: POST,  path: "/v1/tenants/{tenant_id}/projects", resource_kind: tenant, surface: project.detail, body: {title: "boundarycheck probe", market: UK}}
+  - {id: member.role.write,   method: PUT,   path: "/v1/tenants/{tenant_id}/members/{principal_id}", resource_kind: membership, surface: membership.detail, body: {role: editor, status: active, version: 1}}
 
 policy:
   roles: [viewer, editor, admin, owner]          # ascending privilege; used for field floors
@@ -83,6 +95,9 @@ policy:
     invoice.read:         [viewer, editor, admin, owner]
     contact.private.read: [admin, owner]
     audit.read:           [admin, owner]
+    project.write:        [editor, admin, owner]
+    project.create:       [editor, admin, owner]
+    member.role.write:    [owner]                  # only an owner changes roles
   fields:                                        # field -> minimum role that may see it
     tenant.context: {principal_id: viewer, tenant_id: viewer, role: viewer}
     project.list_item: {id: viewer, tenant_id: viewer, market: viewer, title: viewer, status: viewer, row_version: viewer}
@@ -99,6 +114,7 @@ policy:
       owner_principal_id: editor                 # object ownership is informational (lab D-04)
     contacts.private: {id: viewer, public_name: viewer, email_private: admin, phone_private: admin}
     invoice.detail: {id: viewer, tenant_id: viewer, project_id: viewer, amount_minor: viewer, currency: viewer, status: viewer}
+    membership.detail: {}                          # a write is only ever sent where it must be refused: no field is shown
     audit.list_item: {id: admin, actor_id: admin, tenant_id: admin, action: admin, resource_type: admin, resource_id: admin, decision: admin, reason_code: admin, timestamp: admin, correlation_id: admin}
   concealment:
     ignore_body_fields: [request_id]             # the lab puts a fresh request id in every error body

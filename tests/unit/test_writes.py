@@ -48,7 +48,11 @@ def test_write_methods_and_a_static_body_are_accepted(method: str) -> None:
     data = write_config()
     data["actions"][-2]["method"] = method
     action = parse(data).actions[-2]
-    assert action.method == method and action.is_write and action.body == {"title": "boundarycheck probe", "row_version": 1}
+    assert (
+        action.method == method
+        and action.is_write
+        and action.body == {"title": "boundarycheck probe", "row_version": 1}
+    )
 
 
 def test_a_read_action_is_not_a_write() -> None:
@@ -99,7 +103,9 @@ def test_a_body_is_depth_limited() -> None:
 
 
 def test_a_body_must_be_plain_json_data_not_a_yaml_date() -> None:
-    text = dump(write_config()).replace("title: boundarycheck probe\n    row_version: 1", "title: 2024-01-01\n    row_version: 1", 1)
+    text = dump(write_config()).replace(
+        "title: boundarycheck probe\n    row_version: 1", "title: 2024-01-01\n    row_version: 1", 1
+    )
     assert "2024-01-01" in text
     _bad(text, "body")
 
@@ -162,7 +168,12 @@ def _verdict(key: str, status: int | None, changes: list[Any], body: bytes = b"{
 
     cfg = parse(write_config())
     case = next(c for c in plan(cfg) if c.key == key)
-    return compare_write(cfg, case, Observation(status=status, headers={"content-type": "application/json"}, body=body, error=error), changes)
+    return compare_write(
+        cfg,
+        case,
+        Observation(status=status, headers={"content-type": "application/json"}, body=body, error=error),
+        changes,
+    )
 
 
 def _changed() -> list[Any]:
@@ -259,7 +270,9 @@ async def test_a_server_error_that_still_wrote_is_a_finding_too() -> None:
             return Observation(status=500, headers=obs.headers, body=b'{"code":"internal.error"}')
         return obs
 
-    transport = StatefulFake(compliant(cfg, tweak=tweak), mutates=lambda m, p, who: who == "bob" and p == "/v1/projects/pa1" and m == "PATCH")
+    transport = StatefulFake(
+        compliant(cfg, tweak=tweak), mutates=lambda m, p, who: who == "bob" and p == "/v1/projects/pa1" and m == "PATCH"
+    )
     result = await _run(cfg, transport)
     assert _case(result, "bob:project.write:PA1").rule_id == "BC-MUTATION-01"
 
@@ -274,7 +287,9 @@ async def test_a_2xx_to_a_forbidden_write_is_the_access_finding_and_the_change_i
             return Observation(status=200, headers=obs.headers, body=b'{"id":"pa1"}')
         return obs
 
-    transport = StatefulFake(compliant(cfg, tweak=tweak), mutates=lambda m, p, who: who == "bob" and m == "PATCH" and p.endswith("pa1"))
+    transport = StatefulFake(
+        compliant(cfg, tweak=tweak), mutates=lambda m, p, who: who == "bob" and m == "PATCH" and p.endswith("pa1")
+    )
     result = await _run(cfg, transport)
     case = _case(result, "bob:project.write:PA1")
     assert case.rule_id == "BC-ROLE-01" and case.status.value == "finding_candidate"
@@ -285,9 +300,21 @@ async def test_the_write_request_carries_exactly_the_declared_body_and_reads_car
     cfg = parse(write_config())
     transport = StatefulFake(compliant(cfg))
     await _run(cfg, transport)
-    expected = json.dumps({"title": "boundarycheck probe", "row_version": 1}, sort_keys=True, separators=(",", ":")).encode()
+    expected = json.dumps(
+        {"title": "boundarycheck probe", "row_version": 1}, sort_keys=True, separators=(",", ":")
+    ).encode()
     for (method, _path, _who), body in zip(transport.sent, transport.bodies, strict=True):
-        assert body is None if method == "GET" else body in (expected, json.dumps({"title": "boundarycheck probe", "market": "UK"}, sort_keys=True, separators=(",", ":")).encode())
+        assert (
+            body is None
+            if method == "GET"
+            else body
+            in (
+                expected,
+                json.dumps(
+                    {"title": "boundarycheck probe", "market": "UK"}, sort_keys=True, separators=(",", ":")
+                ).encode(),
+            )
+        )
 
 
 async def test_a_failing_snapshot_is_an_error_never_clean_and_stops_the_remaining_writes() -> None:
@@ -313,7 +340,9 @@ async def test_a_failing_baseline_snapshot_means_no_write_is_sent() -> None:
 
 async def test_a_failing_restore_keeps_the_finding_and_stops_the_remaining_writes() -> None:
     cfg = parse(write_config())
-    transport = StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH")
+    transport = StatefulFake(
+        compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH"
+    )
     transport.fail_reset = True
     result = await _run(cfg, transport)
     writes = _writes(result)
@@ -372,13 +401,19 @@ async def test_concealment_is_derived_from_read_cases_only() -> None:
     plain_cfg, write_cfg = parse(mini()), parse(write_config())
     plain = await _run(plain_cfg, FakeTransport(compliant(plain_cfg)))
     mixed = await _run(write_cfg, StatefulFake(compliant(write_cfg)))
-    assert [c.key for c in plain.cases if c.id.startswith("BC-C")] == [c.key for c in mixed.cases if c.id.startswith("BC-C")]
+    assert [c.key for c in plain.cases if c.id.startswith("BC-C")] == [
+        c.key for c in mixed.cases if c.id.startswith("BC-C")
+    ]
 
 
 async def test_a_run_with_writes_is_reproducible() -> None:
     cfg = parse(write_config())
-    first = await _run(cfg, StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and m == "PATCH"), run_id="r")
-    second = await _run(cfg, StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and m == "PATCH"), run_id="r")
+    first = await _run(
+        cfg, StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and m == "PATCH"), run_id="r"
+    )
+    second = await _run(
+        cfg, StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and m == "PATCH"), run_id="r"
+    )
     strip = lambda r: [(c.key, c.status.value, c.rule_id, c.state_changes) for c in r.cases]  # noqa: E731
     assert strip(first) == strip(second)
 
@@ -388,7 +423,9 @@ async def test_the_report_names_where_state_changed_and_never_what_it_held() -> 
     from boundarycheck.report import to_json, to_markdown  # noqa: PLC0415
 
     cfg = parse(write_config())
-    transport = StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH")
+    transport = StatefulFake(
+        compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH"
+    )
     result = await _run(cfg, transport)
     doc = json.loads(to_json(result))
     case = next(c for c in doc["cases"] if c["key"] == "bob:project.write:PA1")
@@ -407,3 +444,45 @@ def test_the_config_is_not_mutated_by_planning_writes() -> None:
     before = copy.deepcopy(cfg.model_dump())
     plan(cfg)
     assert cfg.model_dump() == before
+
+
+async def test_a_restore_that_does_not_restore_is_noticed_and_stops_the_remaining_writes() -> None:
+    cfg = parse(write_config())
+    transport = StatefulFake(
+        compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH"
+    )
+    transport.reset_is_a_lie = True
+    result = await _run(cfg, transport)
+    writes = _writes(result)
+    index = next(i for i, c in enumerate(writes) if c.key == "bob:project.write:PA1")
+    assert writes[index].rule_id == "BC-MUTATION-01"
+    assert {c.status.value for c in writes[index + 1 :]} == {"not_run"}
+    assert any("not restored" in c.detail for c in writes[index + 1 :])
+
+
+async def test_a_request_that_failed_but_still_wrote_is_a_finding_not_just_an_error() -> None:
+    cfg = parse(write_config())
+
+    def responder(method: str, path: str, who: str | None) -> Any:
+        if method == "PATCH" and path.endswith("pa1") and who == "bob":
+            return RuntimeError("the connection died after the write")
+        return compliant(cfg)(method, path, who)
+
+    transport = StatefulFake(responder, mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH")
+    result = await _run(cfg, transport)
+    case = _case(result, "bob:project.write:PA1")
+    assert case.rule_id == "BC-MUTATION-01" and case.status.value == "finding_candidate" and case.state_changes
+    assert transport.resets == 1
+
+
+async def test_a_request_that_failed_and_wrote_nothing_is_an_error() -> None:
+    cfg = parse(write_config())
+
+    def responder(method: str, path: str, who: str | None) -> Any:
+        if method == "PATCH" and path.endswith("pa1") and who == "bob":
+            return RuntimeError("boom")
+        return compliant(cfg)(method, path, who)
+
+    result = await _run(cfg, StatefulFake(responder))
+    case = _case(result, "bob:project.write:PA1")
+    assert case.status.value == "error" and case.state_changes == []

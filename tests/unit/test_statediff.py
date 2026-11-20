@@ -36,7 +36,9 @@ def test_an_added_row_is_reported_with_its_table_and_key() -> None:
 
 
 def test_a_removed_row_is_reported() -> None:
-    assert _diff({"invoices": (("i1", 5), ("i2", 6))}, {"invoices": (("i1", 5),)}) == [_change("invoices", "i2", "removed")]
+    assert _diff({"invoices": (("i1", 5), ("i2", 6))}, {"invoices": (("i1", 5),)}) == [
+        _change("invoices", "i2", "removed")
+    ]
 
 
 def test_a_modified_row_is_reported_even_when_one_column_changes() -> None:
@@ -97,7 +99,7 @@ def _database(path: Path) -> sqlite3.Connection:
 
 
 def _snapshot(path: Path) -> Any:
-    from boundarycheck.statediff import snapshot_sqlite  # noqa: PLC0415
+    from boundarycheck.transports.sqlite_state import snapshot_sqlite  # noqa: PLC0415
 
     return snapshot_sqlite(path)
 
@@ -138,7 +140,9 @@ def test_a_row_change_in_any_covered_table_is_seen_and_an_audit_append_is_not(tm
 
 
 def test_a_missing_database_is_an_error_not_an_empty_snapshot(tmp_path: Path) -> None:
-    with pytest.raises(Exception, match="(?i)database|snapshot"):
+    from boundarycheck.statediff import SnapshotError  # noqa: PLC0415
+
+    with pytest.raises(SnapshotError, match="does not exist"):
         _snapshot(tmp_path / "nope.sqlite")
 
 

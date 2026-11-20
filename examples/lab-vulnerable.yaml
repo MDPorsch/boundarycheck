@@ -1,11 +1,15 @@
 # boundarycheck example: the DELIBERATELY VULNERABLE variant of the tenant-boundary-lab.
 #
-# Identical to examples/lab.yaml except for the two read routes the vulnerable variant does not
-# implement (audit and the nested invoice route; tests/integration/test_examples.py keeps the two
-# files in step). With no flaw enabled it is clean; enable flaws one at a time:
+# Identical to examples/lab.yaml except for the four routes the vulnerable variant does not implement
+# (audit, the nested invoice route, project create and the role change; tests/integration/test_examples.py
+# keeps the two files in step). With no flaw enabled it is clean; enable flaws one at a time:
 #
 #   boundarycheck test --config examples/lab-vulnerable.yaml --transport fixture --fixture-flaws ROLE_CHECK_MISSING
-#   (flaws: TENANT_PREDICATE_OMITTED, ROLE_CHECK_MISSING, PRIVATE_PROPERTY_SERIALIZED, MARKET_BOUNDARY_OMITTED)
+#   (flaws: TENANT_PREDICATE_OMITTED, ROLE_CHECK_MISSING, PRIVATE_PROPERTY_SERIALIZED, MARKET_BOUNDARY_OMITTED,
+#    WRITE_BEFORE_AUTHORIZATION)
+#
+# The fifth flaw answers every refused write with the correct status code and has already written:
+# only the state diff of the write checks (BC-MUTATION-01) finds it. --reads-only runs clean against it.
 #
 # Original header follows.
 # boundarycheck example: the tenant-boundary-lab reference target.
@@ -17,6 +21,11 @@
 #   boundarycheck validate --config examples/lab.yaml
 #   boundarycheck plan     --config examples/lab.yaml        # every request, nothing is sent
 #   boundarycheck test     --config examples/lab.yaml --transport fixture
+#
+# WRITE CHECKS (project.write, project.create, member.role.write). They run on the in-process fixture
+# only, send ONLY requests the policy says must be refused, and are judged by a snapshot diff of the
+# lab's database: a refusal that still changed a row is BC-MUTATION-01 whatever its status code. A live
+# target cannot report its state, so use --reads-only there (the report says the writes were left out).
 #
 # All data is synthetic. There are NO secrets in this file: credentials come from the fixture
 # transport (minted in memory per run) or from environment variables (live transport).
@@ -80,6 +89,8 @@ actions:
   - {id: project.read,        method: GET, path: "/v1/projects/{project_id}",         resource_kind: project, surface: project.detail}
   - {id: contact.private.read, method: GET, path: "/v1/projects/{project_id}/contacts", resource_kind: project, surface: contacts.private, page: true}
   - {id: invoice.read,        method: GET, path: "/v1/invoices/{invoice_id}",         resource_kind: invoice, surface: invoice.detail}
+  # writes: static, valid bodies, so that a skipped check would let the write through (never an invalid body that a validator rejects first)
+  - {id: project.write,       method: PATCH, path: "/v1/projects/{project_id}", resource_kind: project, surface: project.detail, body: {title: "boundarycheck probe", row_version: 1}}
 
 policy:
   roles: [viewer, editor, admin, owner]          # ascending privilege; used for field floors
@@ -90,6 +101,7 @@ policy:
     project.read:         [viewer, editor, admin, owner]
     invoice.read:         [viewer, editor, admin, owner]
     contact.private.read: [admin, owner]
+    project.write:        [editor, admin, owner]
   fields:                                        # field -> minimum role that may see it
     tenant.context: {principal_id: viewer, tenant_id: viewer, role: viewer}
     project.list_item: {id: viewer, tenant_id: viewer, market: viewer, title: viewer, status: viewer, row_version: viewer}

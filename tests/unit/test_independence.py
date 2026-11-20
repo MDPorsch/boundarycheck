@@ -12,7 +12,7 @@ pytestmark = pytest.mark.milestone("S1")
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "boundarycheck"
 JUDGES = ("oracle.py", "comparator.py")
-ALLOWED_FOR_JUDGES = {"boundarycheck.model", "boundarycheck.config"}
+ALLOWED_FOR_JUDGES = {"boundarycheck.model", "boundarycheck.config", "boundarycheck.statediff"}
 STDLIB_OK = {
     "__future__",
     "collections",
@@ -88,3 +88,11 @@ def test_nothing_imports_a_module_named_by_the_config() -> None:
         source = path.read_text()
         assert "importlib.import_module" not in source and "__import__(" not in source, path.name
         assert "eval(" not in source and "exec(" not in source.replace("execute", ""), path.name
+
+
+def test_the_pure_state_diff_imports_nothing_from_the_package_and_no_io_module() -> None:
+    """The judges may use `statediff`, so it must be pure: standard-library data handling only. The
+    SQLite reading lives in `transports/sqlite_state.py`, where a transport belongs."""
+    found = _imports(SRC / "statediff.py")
+    assert not {m for m in found if m.split(".")[0] == "boundarycheck"}
+    assert not {m for m in found if m.split(".")[0] in {"sqlite3", "socket", "httpx", "os", "subprocess", "pathlib"}}

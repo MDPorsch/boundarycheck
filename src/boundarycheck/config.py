@@ -8,6 +8,7 @@ Errors name a location and a problem and never echo the offending value.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
@@ -169,15 +170,59 @@ class ListSpec(_Model):
     total_field: Param | None = None
 
 
+READ_METHODS: Final = ("GET", "HEAD")
+WRITE_METHODS: Final = ("POST", "PUT", "PATCH", "DELETE")
+MAX_BODY_BYTES: Final = 4096
+MAX_BODY_DEPTH: Final = 6
+
+
+def _depth(value: Any) -> int:
+    if isinstance(value, dict):
+        return 1 + max((_depth(v) for v in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_depth(v) for v in value), default=0)
+    return 0
+
+
 class Action(_Model):
     id: Ident
-    method: Literal["GET", "HEAD"]  # v0.1 is read-only
+    # Reads run anywhere. A write is only ever sent by a state-aware transport (the in-process
+    # fixture) and only where the policy says it must be refused (docs/contract.md s9).
+    method: Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
     path: str
     resource_kind: Param
     surface: Ident
     capability: Ident | None = None
     page: bool = False
     list_spec: ListSpec | None = Field(default=None, alias="list")
+    body: dict[str, Any] | None = None  # a static JSON object; only for writes
+
+    @field_validator("body")
+    @classmethod
+    def _plain_small_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        try:
+            encoded = json.dumps(value, separators=(",", ":"))
+        except (TypeError, ValueError):
+            raise ValueError(
+                "body must be plain JSON data (strings, numbers, booleans, null, lists, objects)"
+            ) from None
+        if len(encoded.encode("utf-8")) > MAX_BODY_BYTES:
+            raise ValueError(f"body is too large (limit {MAX_BODY_BYTES} bytes)")
+        if _depth(value) > MAX_BODY_DEPTH:
+            raise ValueError(f"body is nested too deeply (limit {MAX_BODY_DEPTH} levels)")
+        return value
+
+    @model_validator(mode="after")
+    def _body_only_on_writes(self) -> Action:
+        if self.body is not None and not self.is_write:
+            raise ValueError("a body is only allowed on a write action (POST, PUT, PATCH, DELETE)")
+        return self
+
+    @property
+    def is_write(self) -> bool:
+        return self.method in WRITE_METHODS
 
     @field_validator("path")
     @classmethod

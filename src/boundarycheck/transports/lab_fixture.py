@@ -8,22 +8,27 @@ that never leaves memory.
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 import httpx
 
 from boundarycheck.config import Config
 from boundarycheck.model import Observation, PolicyRefusal, TransportUnavailable
+from boundarycheck.statediff import Snapshot, SnapshotError
+from boundarycheck.transports.sqlite_state import snapshot_sqlite
 
 ISSUER: Final = "https://issuer.boundarycheck.invalid"
 AUDIENCE: Final = "boundarycheck-lab"
 LAB_ENV: Final = {"LAB_MODE": "1", "TENANTLAB_ENV": "test"}
+READ_METHODS: Final = ("GET", "HEAD")
+WRITE_METHODS: Final = ("POST", "PUT", "PATCH", "DELETE")
 NOT_INSTALLED: Final = (
     "the 'tenant-boundary-lab' fixture needs the lab installed from a source checkout "
     "(git clone --recurse-submodules, then 'uv sync'); a wheel install of boundarycheck does not include it"
@@ -42,12 +47,41 @@ def known_flaws() -> list[str]:
     return sorted(f.name for f in Flaw)
 
 
+class LabFiles(NamedTuple):
+    database: Path  # the working database the lab serves
+    pristine: Path  # an untouched copy taken right after seeding
+
+
 class LabFixtureTransport:
-    def __init__(self, client: httpx.AsyncClient, tokens: dict[str, str], name: str, cap: int) -> None:
+    """The lab in process. It is STATE-AWARE: it reads the lab's database with raw SQL, independently
+    of the lab's own code, and can restore a pristine copy, so write checks are safe here and only here."""
+
+    state_aware = True
+
+    def __init__(self, client: httpx.AsyncClient, tokens: dict[str, str], name: str, cap: int, files: LabFiles) -> None:
         self._client = client
         self._tokens = tokens
         self.name = name
         self._cap = cap
+        self._files = files
+
+    async def snapshot(self) -> Snapshot:
+        return snapshot_sqlite(self._files.database)
+
+    async def reset_state(self) -> None:
+        """Copy the pristine database back over the working one (SQLite's backup API)."""
+        try:
+            source = sqlite3.connect(f"{self._files.pristine.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                target = sqlite3.connect(self._files.database)
+                try:
+                    source.backup(target)
+                finally:
+                    target.close()
+            finally:
+                source.close()
+        except sqlite3.Error:
+            raise SnapshotError("the pristine state could not be restored") from None
 
     def __repr__(self) -> str:
         return f"LabFixtureTransport({self.name!r})"
@@ -62,15 +96,19 @@ class LabFixtureTransport:
     def secrets(self) -> list[str]:
         return list(self._tokens.values())
 
-    async def send(self, method: str, path: str, principal: str | None) -> Observation:
-        if method not in ("GET", "HEAD"):
-            raise PolicyRefusal(f"method {method[:10]!r} is not allowed: v0.1 sends GET and HEAD only")
+    async def send(self, method: str, path: str, principal: str | None, body: bytes | None = None) -> Observation:
+        if method not in (*READ_METHODS, *WRITE_METHODS):
+            raise PolicyRefusal(f"method {method[:10]!r} is not allowed")
+        if body is not None and method not in WRITE_METHODS:
+            raise PolicyRefusal("a request body is only allowed on a write")
         headers = {"Accept": "application/json"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         if principal is not None:
             if principal not in self._tokens:
                 raise PolicyRefusal("no credential for this principal")
             headers["Authorization"] = f"Bearer {self._tokens[principal]}"
-        response = await self._client.request(method, path, headers=headers)
+        response = await self._client.request(method, path, headers=headers, content=body)
         seen = {k.lower(): v for k, v in response.headers.items()}
         if len(response.content) > self._cap:
             return Observation(status=response.status_code, headers=seen, error="body_too_large")
@@ -78,6 +116,34 @@ class LabFixtureTransport:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _mint_tokens(config: Config, fixtures: Any, private: Any) -> dict[str, str]:
+    """One short-lived token per principal that names a fixture, signed with the run's ephemeral key."""
+    import jwt  # noqa: PLC0415
+
+    now = int(time.time())
+    tokens: dict[str, str] = {}
+    for key, principal in config.principals.items():
+        if principal.credential is not None and principal.credential.fixture is not None:
+            claims = {
+                "sub": fixtures.principal(principal.credential.fixture).id, "jti": str(uuid.uuid4()),
+                "iss": ISSUER, "aud": AUDIENCE, "iat": now, "nbf": now, "exp": now + 600,
+            }  # fmt: skip
+            tokens[key] = jwt.encode(claims, private, algorithm="EdDSA")
+    return tokens
+
+
+def _copy_database(source: Path, target: Path) -> None:
+    origin = sqlite3.connect(source)
+    try:
+        destination = sqlite3.connect(target)
+        try:
+            origin.backup(destination)
+        finally:
+            destination.close()
+    finally:
+        origin.close()
 
 
 @asynccontextmanager
@@ -97,7 +163,7 @@ async def _open(
     if chosen and variant != "vulnerable":
         raise TransportUnavailable("flaws can only be enabled on the 'vulnerable' variant")
     try:
-        import jwt  # noqa: PLC0415
+        import jwt  # noqa: F401, PLC0415 - a presence check: the helper that mints tokens imports it
         from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: PLC0415
         from tenantlab.api.app import create_app  # noqa: PLC0415
@@ -118,9 +184,12 @@ async def _open(
         .decode("ascii")
     )
     with tempfile.TemporaryDirectory(prefix="boundarycheck-lab-") as scratch:
-        url = f"sqlite+pysqlite:///{Path(scratch) / 'lab.sqlite'}"
+        database = Path(scratch) / "lab.sqlite"
+        pristine = Path(scratch) / "pristine.sqlite"
+        url = f"sqlite+pysqlite:///{database}"
         upgrade_to_head(url)
         seed_fixtures(url)
+        _copy_database(database, pristine)
         settings = Settings(
             database_url=url,
             jwt_issuer=ISSUER,
@@ -135,18 +204,9 @@ async def _open(
 
             app = create_vulnerable_app(settings, flaws=frozenset(Flaw[n] for n in chosen), environ=LAB_ENV)
             name = f"fixture:tenant-boundary-lab:vulnerable({','.join(chosen) or 'no flaws'})"
-        fixtures = load_fixtures()
-        now = int(time.time())
-        tokens: dict[str, str] = {}
-        for key, principal in config.principals.items():
-            if principal.credential is not None and principal.credential.fixture is not None:
-                claims = {
-                    "sub": fixtures.principal(principal.credential.fixture).id, "jti": str(uuid.uuid4()),
-                    "iss": ISSUER, "aud": AUDIENCE, "iat": now, "nbf": now, "exp": now + 600,
-                }  # fmt: skip
-                tokens[key] = jwt.encode(claims, private, algorithm="EdDSA")
+        tokens = _mint_tokens(config, load_fixtures(), private)
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://lab.invalid")
-        transport = cls(client, tokens, name, config.scope.target.max_response_bytes)
+        transport = cls(client, tokens, name, config.scope.target.max_response_bytes, LabFiles(database, pristine))
         try:
             yield transport
         finally:

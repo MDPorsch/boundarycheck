@@ -26,6 +26,7 @@ def _case_json(c: CaseResult) -> dict[str, Any]:
         "resource": c.resource, "expected": c.expected, "observed": c.observed, "reason": c.reason,
         "detail": c.detail, "redacted_evidence_refs": list(c.evidence_refs), "limitations": list(c.limitations),
         "review_state": c.review_state, "observed_at": c.observed_at,
+        "state_changes": [dict(change) for change in c.state_changes],
     }  # fmt: skip
 
 

@@ -315,12 +315,17 @@ class StatefulFake(FakeTransport):
         self.resets = 0
         self.fail_snapshot_on: int | None = None  # the n-th snapshot call raises
         self.fail_reset = False
+        self.reset_is_a_lie = False  # reset_state() says it worked and restores nothing
 
     async def send(self, method: str, path: str, principal: str | None, body: bytes | None = None) -> Any:
-        result = await super().send(method, path, principal, body)
-        if self._mutates(method, path, principal):
-            self.tables = {**self.tables, "projects": (("p-1", "CHANGED SECRET TITLE", 2), self.tables["projects"][1])}
-        return result
+        try:
+            return await super().send(method, path, principal, body)
+        finally:  # the write lands even when the request then fails
+            if self._mutates(method, path, principal):
+                self.tables = {
+                    **self.tables,
+                    "projects": (("p-1", "CHANGED SECRET TITLE", 2), self.tables["projects"][1]),
+                }
 
     async def snapshot(self) -> dict[str, tuple[tuple[Any, ...], ...]]:
         self.snapshots += 1
@@ -332,7 +337,8 @@ class StatefulFake(FakeTransport):
         self.resets += 1
         if self.fail_reset:
             raise RuntimeError("reset failed")
-        self.tables = dict(self._pristine)
+        if not self.reset_is_a_lie:
+            self.tables = dict(self._pristine)
 
 
 def write_config() -> dict[str, Any]:

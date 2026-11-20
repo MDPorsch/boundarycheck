@@ -32,6 +32,8 @@ CFG, ORC, CMP, ENG, RED, EVI, LIV, LAB, REP, NET, MOD, CLI = (
     for n in ("config", "oracle", "comparator", "engine", "redact", "evidence", "transports/live", "transports/lab_fixture", "report", "netcheck", "model", "cli")
 )  # fmt: skip
 
+PLN, STD, SQS = f"{SRC}/planner.py", f"{SRC}/statediff.py", f"{SRC}/transports/sqlite_state.py"
+
 M: dict[str, list[tuple[str, str, str]]] = {
     # ---- the config loader ---------------------------------------------------------------------
     # an alias event also carries an anchor name, so each check alone still refuses an alias (two layers): remove both
@@ -45,7 +47,6 @@ M: dict[str, list[tuple[str, str, str]]] = {
     "config_unknown_keys_allowed": [(CFG, 'extra="forbid"', 'extra="ignore"')],
     "config_type_coercion_allowed": [(CFG, "strict=True,", "strict=False,")],
     "config_remote_host_allowed": [(CFG, "                parse_loopback_base_url(value)", "                pass")],
-    "config_write_methods_allowed": [(CFG, 'method: Literal["GET", "HEAD"]', 'method: Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]')],
     "config_dot_segments_allowed": [(CFG, 'if any(part in {".", ".."} for part in value.split("/")):', "if False:")],
     "config_path_not_checked_whole": [(CFG, "_PATH_RE.fullmatch(value)", "_PATH_RE.match(value)")],
     "config_identifier_pattern_weakened": [(CFG, 'IDENT_PATTERN: Final = r"^[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}$"', 'IDENT_PATTERN: Final = r"^.{1,128}$"')],
@@ -143,6 +144,55 @@ M: dict[str, list[tuple[str, str, str]]] = {
     "report_markdown_control_characters_kept": [(REP, '_CONTROL.sub(" ", str(value))', "str(value)")],
     "cli_failures_exit_one": [(CLI, "    raise typer.Exit(2)\n\n\ndef _version", "    raise typer.Exit(1)\n\n\ndef _version")],
     "cli_internal_errors_exit_one": [(CLI, '_fail(f"internal error', 'typer.echo(f"internal error'), ],
+    # ---- M4: write checks and the state diff (docs/contract.md s9) -------------------------------
+    "planner_sends_writes_the_policy_allows": [(PLN, "                if action.is_write and expected.outcome is Outcome.ALLOW:\n                    continue  # a write the policy allows is never sent (docs/contract.md s9.2)\n", "")],
+    "planner_counts_no_unexercised_writes": [(PLN, "        and oracle.expected_for(principal, action, resource).outcome is Outcome.ALLOW\n    )\n", "        and False\n    )\n")],
+    "diff_ignores_removed_rows": [(STD, '        changes.extend(StateChange(table, key, "removed") for key in old.keys() - new.keys())\n', "")],
+    "diff_ignores_added_rows": [(STD, '        changes.extend(StateChange(table, key, "added") for key in new.keys() - old.keys())\n', "")],
+    "diff_ignores_modified_rows": [(STD, "if old[key] != new[key])", "if False)")],
+    "diff_accepts_different_table_sets": [(STD, "    if set(before) != set(after):", "    if False:")],
+    "diff_key_is_not_text": [(STD, "    old = {str(row[0]): row for row in before[table]}", "    old = {row[0]: row for row in before[table]}")],
+    "diff_is_not_sorted": [(STD, "    return sorted(changes)", "    return changes")],
+    "diff_looks_at_the_first_table_only": [(STD, "    for table in sorted(before):", "    for table in sorted(before)[:1]:")],
+    "snapshot_includes_the_audit_table": [(SQS, 'EXCLUDED_TABLES: Final = frozenset({"audit_events", "alembic_version"})', "EXCLUDED_TABLES: Final = frozenset()")],
+    "snapshot_rows_are_unordered": [(SQS, "ORDER BY 1", "")],
+    "snapshot_of_a_missing_file_is_empty": [(SQS, '        raise SnapshotError("the database file to snapshot does not exist")', "        return {}")],
+    "snapshot_does_not_quote_table_names": [(SQS, """quoted = '"' + name.replace('"', '""') + '"'""", "quoted = name")],
+    "write_state_change_ignored": [(CMP, "    if not changes:\n        return verdict\n", "    if True:\n        return verdict\n")],
+    "write_2xx_range_too_wide": [(CMP, "    if status is not None and 200 <= status < 300:\n        # access was granted", "    if status is not None and 200 <= status < 600:\n        # access was granted")],
+    "write_mutation_severity_downgraded": [(CMP, '        MUTATION_RULE,\n        "high",\n        "high",\n', '        MUTATION_RULE,\n        "medium",\n        "medium",\n')],
+    "write_mutation_uses_the_access_rule": [(CMP, '        MUTATION_RULE,\n        "high",', '        case.rule_id,\n        "high",')],
+    "write_failure_with_a_change_is_not_a_finding": [(CMP, "    if status is not None and 200 <= status < 300:\n        # access was granted", "    if status is None or 200 <= status < 300:\n        # access was granted")],
+    "engine_never_restores_state": [(ENG, "        await transport.reset_state()\n        restored = await transport.snapshot()\n", "        restored = await transport.snapshot()\n")],
+    "engine_does_not_verify_the_restore": [(ENG, '    if diff(baseline, restored):\n        return changes, "the pristine state was not restored; the remaining write checks were not run"\n', "")],
+    "engine_sends_writes_to_a_transport_without_state": [(ENG, "        if is_write and not state_aware:\n            results[case.key] = _result(case, Status.NOT_RUN, NO_STATE, when)\n            continue\n", "")],
+    "engine_ignores_reads_only": [(ENG, "    cases = [c for c in planned if not (reads_only and c.action.is_write)]", "    cases = list(planned)")],
+    "engine_forgets_that_writes_were_halted": [(ENG, "        if is_write and halted is not None:\n            results[case.key] = _result(case, Status.NOT_RUN, halted, when)\n            continue\n", "")],
+    "engine_takes_no_baseline": [(ENG, "            baseline = await stateful.snapshot()", "            baseline = {}")],
+    "engine_does_not_send_the_body": [(ENG, '    return json.dumps(case.action.body, sort_keys=True, separators=(",", ":")).encode("utf-8")', "    return None")],
+    "engine_concealment_includes_writes": [(ENG, "            case.action.is_write\n            or case.principal is None", "            case.principal is None")],
+    "engine_does_not_record_state_changes": [(ENG, "        result.state_changes = [c.as_dict() for c in changes]\n        try:", "        try:")],
+    "engine_failed_request_that_wrote_is_only_an_error": [(ENG, "            if changes:  # the request failed, yet state changed: that is still a finding", "            if False:")],
+    "engine_does_not_disclose_unexercised_writes": [(ENG, "    elif unexercised_writes(config):", "    elif False:")],
+    "engine_does_not_disclose_reads_only": [(ENG, "    if omitted:\n        limitations.append(", "    if False:\n        limitations.append(")],
+    "engine_ignores_a_failed_snapshot": [(ENG, '        return [], "the state snapshot after the request failed; the remaining write checks were not run"', "        return [], None")],
+    "lab_fixture_is_not_state_aware": [(LAB, "    state_aware = True\n\n    def __init__", "    state_aware = False\n\n    def __init__")],
+    "lab_fixture_reset_restores_nothing": [(LAB, "                    source.backup(target)\n", "                    pass\n")],
+    "lab_fixture_accepts_a_body_on_a_read": [(LAB, '        if body is not None and method not in WRITE_METHODS:\n            raise PolicyRefusal("a request body is only allowed on a write")\n', "")],
+    "lab_fixture_sends_no_body": [(LAB, "content=body)", "content=None)")],
+    "lab_fixture_accepts_unknown_methods": [(LAB, '        if method not in (*READ_METHODS, *WRITE_METHODS):\n            raise PolicyRefusal(f"method {method[:10]!r} is not allowed")\n', "")],
+    "live_accepts_a_request_body": [(LIV, '        if body is not None:\n            raise PolicyRefusal("the live transport never sends a request body")\n', "")],
+    "config_allows_a_body_on_a_read": [(CFG, "        if self.body is not None and not self.is_write:", "        if False:")],
+    "config_body_size_unlimited": [(CFG, '        if len(encoded.encode("utf-8")) > MAX_BODY_BYTES:', "        if False:")],
+    "config_body_depth_unlimited": [(CFG, "        if _depth(value) > MAX_BODY_DEPTH:", "        if False:")],
+    "config_body_need_not_be_json": [(CFG, '            encoded = json.dumps(value, separators=(",", ":"))', "            encoded = str(value)")],
+    "config_nothing_is_a_write": [(CFG, "        return self.method in WRITE_METHODS", "        return False")],
+    "config_delete_is_not_a_write": [(CFG, 'WRITE_METHODS: Final = ("POST", "PUT", "PATCH", "DELETE")', 'WRITE_METHODS: Final = ("POST", "PUT", "PATCH")')],
+    "cli_fixture_ignores_reads_only": [(CLI, "            _run_fixture(cfg, fixture_variant, flaws, reads_only)", "            _run_fixture(cfg, fixture_variant, flaws, False)")],
+    "cli_live_ignores_reads_only": [(CLI, "            else _run_live(cfg, reads_only)", "            else _run_live(cfg, False)")],
+    "cli_plan_echoes_the_body": [(CLI, "            body = f\" [JSON body, {len(json.dumps(c.action.body, separators=(',', ':')))} bytes]\"", "            body = f\" {c.action.body}\"")],
+    "cli_hides_the_notes": [(CLI, '        if "--reads-only" in note or "not exercised" in note:', "        if False:")],
+    "report_drops_the_state_changes": [(REP, '        "state_changes": [dict(change) for change in c.state_changes],\n', "")],
 }  # fmt: skip
 
 IGNORE = shutil.ignore_patterns(

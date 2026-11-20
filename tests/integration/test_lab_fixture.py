@@ -80,6 +80,12 @@ SINGLE = {
 }
 
 
+# Since M4 the write checks run too. A write the tenant flaw lets through can be a ROLE finding as well:
+# dave is an EDITOR of A and a VIEWER of B, and the flaw applies his A role to B's project.
+WRITE_ACTIONS = {"project.write", "project.create", "member.role.write"}
+WRITE_EXTRA = {"TENANT_PREDICATE_OMITTED": {"BC-ROLE-01"}}
+
+
 @pytest.mark.parametrize("flaw", sorted(SINGLE))
 async def test_each_flaw_is_detected_and_only_its_own_rule_families_fire(flaw: str) -> None:
     must_find, allowed_rules = SINGLE[flaw]
@@ -87,7 +93,10 @@ async def test_each_flaw_is_detected_and_only_its_own_rule_families_fire(flaw: s
     found = _findings(result)
     assert result.exit_code == 1
     assert must_find <= set(found), sorted(must_find - set(found))
-    assert {c.rule_id for c in found.values()} <= allowed_rules, {c.rule_id for c in found.values()} - allowed_rules
+    reads = {c.rule_id for c in found.values() if c.action not in WRITE_ACTIONS}
+    writes = {c.rule_id for c in found.values() if c.action in WRITE_ACTIONS}
+    assert reads <= allowed_rules, reads - allowed_rules
+    assert writes <= allowed_rules | WRITE_EXTRA.get(flaw, set()), writes
     # nothing else went wrong: every other case is clean, or a concealment comparison that was not
     # evaluated precisely because one of its two requests is itself a finding
     for c in (c for c in result.cases if c.key not in found):

@@ -58,7 +58,7 @@ async def test_the_patched_lab_refuses_every_write_and_changes_nothing() -> None
     result, final = await _lab()
     writes = _writes(result)
     assert len(writes) >= 60, len(writes)
-    assert {a for a in (c.action for c in writes)} == WRITE_ACTIONS
+    assert {c.action for c in writes} == WRITE_ACTIONS
     assert not _not_clean(result), _not_clean(result)
     assert result.exit_code == 0 and all(c.state_changes == [] for c in result.cases)
     assert final is not None
@@ -69,7 +69,12 @@ async def test_the_fifth_flaw_is_found_by_the_state_diff_and_only_by_it() -> Non
     found = _findings(result)
     assert result.exit_code == 1
     assert {c.rule_id for c in found.values()} == {"BC-MUTATION-01"}
-    assert {"bob:project.write:PA1", "carla:project.write:PA1", "gina:project.write:PC1", "alice:project.write:PB1"} <= set(found)
+    assert {
+        "bob:project.write:PA1",
+        "carla:project.write:PA1",
+        "gina:project.write:PC1",
+        "alice:project.write:PB1",
+    } <= set(found)
     assert all(c.action == "project.write" for c in found.values())
     assert all(c.state_changes and c.state_changes[0]["table"] == "projects" for c in found.values())
     # the status code is exactly the correct refusal in every one of them
@@ -98,17 +103,33 @@ async def test_the_write_exploit_of_the_tenant_flaw_is_now_detected() -> None:
     result, _ = await _lab("vulnerable", ("TENANT_PREDICATE_OMITTED",))
     found = _findings(result)
     assert "alice:project.write:PB1" in found and found["alice:project.write:PB1"].rule_id == "BC-TENANT-01"
-    assert {c.rule_id for c in found.values()} <= {"BC-TENANT-01", "BC-FIELDS-01"}
+    # dave is an editor of A and only a viewer of B; the flaw applies his A role to B's project
+    assert "dave:project.write:PB1" in found and found["dave:project.write:PB1"].rule_id == "BC-ROLE-01"
+    writes = {c.rule_id for c in found.values() if c.action in WRITE_ACTIONS}
+    reads = {c.rule_id for c in found.values() if c.action not in WRITE_ACTIONS}
+    assert writes <= {"BC-TENANT-01", "BC-ROLE-01"} and reads <= {"BC-TENANT-01", "BC-FIELDS-01"}
 
 
-@pytest.mark.parametrize("flaw", ["PRIVATE_PROPERTY_SERIALIZED", "MARKET_BOUNDARY_OMITTED"])
-async def test_flaws_that_are_not_about_writes_add_no_write_finding(flaw: str) -> None:
-    result, _ = await _lab("vulnerable", (flaw,))
+async def test_a_flaw_that_is_only_about_serialization_adds_no_write_finding() -> None:
+    result, _ = await _lab("vulnerable", ("PRIVATE_PROPERTY_SERIALIZED",))
     assert not [c for c in _findings(result).values() if c.action in WRITE_ACTIONS]
 
 
+async def test_the_market_flaw_lets_the_hidden_project_be_written_and_is_found_by_the_scope_rule() -> None:
+    result, _ = await _lab("vulnerable", ("MARKET_BOUNDARY_OMITTED",))
+    writes = {k: c for k, c in _findings(result).items() if c.action in WRITE_ACTIONS}
+    # every member of tenant A who reaches the hidden project is a finding: alice and dave are let in
+    # (a write that happens), bob is refused for his ROLE instead of the market (a different denial)
+    assert set(writes) == {f"{who}:project.write:PA2" for who in ("alice", "bob", "dave")}
+    assert {c.rule_id for c in writes.values()} == {"BC-SCOPE-01"}
+    assert writes["alice:project.write:PA2"].state_changes, "the hidden project really was written"
+    assert not writes["bob:project.write:PA2"].state_changes, "bob was refused, so nothing was written"
+
+
 async def test_every_flaw_at_once_finds_all_three_kinds() -> None:
-    result, _ = await _lab("vulnerable", ("TENANT_PREDICATE_OMITTED", "ROLE_CHECK_MISSING", "WRITE_BEFORE_AUTHORIZATION"))
+    result, _ = await _lab(
+        "vulnerable", ("TENANT_PREDICATE_OMITTED", "ROLE_CHECK_MISSING", "WRITE_BEFORE_AUTHORIZATION")
+    )
     rules = {c.rule_id for c in _findings(result).values() if c.action == "project.write"}
     assert {"BC-MUTATION-01", "BC-ROLE-01", "BC-TENANT-01"} <= rules
 

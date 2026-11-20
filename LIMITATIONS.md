@@ -9,7 +9,7 @@ clean run is not mistaken for more than it is. Items are referenced from the cod
   Every report says so.
 * **BL-02 The policy is the assessor's.** The tool cannot tell a wrong policy from a vulnerable API. A policy
   that says viewers may read private contacts makes a correct API look broken (a low-severity candidate;
-  tested and documented in `tests/integration/test_lab_fixture.py`). Confidence is never `high`.
+  tested and documented in `tests/integration/test_lab_fixture.py`). Confidence is never `high` for a mismatch with the policy; `BC-MUTATION-01` is `high` because it does not depend on the policy (D-B18).
 * **BL-03 One observation per case.** No retries and no statistics. A flaky target produces `incomplete` or
   `inconclusive`, never a clean result, but a rare race is simply not observed.
 * **BL-04 Only what is declared is tested.** Routes, objects and principals that are not in the config are
@@ -17,10 +17,13 @@ clean run is not mistaken for more than it is. Items are referenced from the cod
 
 ## About coverage
 
-* **BL-05 Read-only.** v0.1 sends `GET`/`HEAD` only. Flaws that need a write to show are **not detected**.
-  Concretely, the reference lab's `ROLE_CHECK_MISSING` and `TENANT_PREDICATE_OMITTED` flaws also let a
-  viewer write and let a user in tenant A write to tenant B; boundarycheck detects their *read*
-  consequences (private contacts, cross-tenant reads) and not the write exploits.
+* **BL-05 Writes are checked on the in-process fixture only, and only the refused ones.** A live target
+  is sent `GET`/`HEAD` only, so against a live target **no write-path flaw is detected**: a declared
+  write check there is `not_run` (exit `2`) or left out with `--reads-only`. On the fixture, write cases
+  are the requests the policy says must be refused; a write the policy *allows* is never sent (the run
+  says how many), so a broken *allowed* write (a legitimate user denied) is not tested. The state diff
+  covers every table except `audit_events` and `alembic_version`; a side effect outside the database
+  (a queue, a file, another service) is invisible to it.
 * **BL-06 Not timing, concurrency or resource limits.** No timing channel, race, quota or rate-limit
   testing. Concealment compares status, selected headers and body shape, not response time.
 * **BL-07 First page of a list only.** A list is checked against the declared objects for the first page the

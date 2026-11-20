@@ -10,12 +10,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 from boundarycheck.config import Action, Config
 from boundarycheck.model import Observation, Outcome, Status
+from boundarycheck.statediff import StateChange
+
+MUTATION_RULE = "BC-MUTATION-01"
 
 ENVELOPE = ("items", "next_cursor", "total")
 _SAFE = re.compile(r"[^A-Za-z0-9_.\[\]-]")
@@ -147,6 +150,34 @@ def compare(config: Config, case: Any, observation: Observation) -> Verdict:
     if observed is not Outcome.ALLOW or case.action.method == "HEAD" or observation.status == 204:
         return ok
     return _check_allowed(config, case, observation, ok)
+
+
+def _where(changes: Sequence[StateChange]) -> str:
+    """Names only (table, key, kind), restricted to a safe alphabet: a value never gets here."""
+    shown = ", ".join(f"{_clean(c.table)}:{_clean(c.key)} ({c.kind})" for c in changes[:3])
+    return shown + (f" and {len(changes) - 3} more" if len(changes) > 3 else "")
+
+
+def compare_write(config: Config, case: Any, observation: Observation, changes: Sequence[StateChange]) -> Verdict:
+    """A write the policy says must be refused (docs/contract.md s9.4). What the target ANSWERED is
+    compared as for a read; what it DID to its own state is judged by an independent diff."""
+    verdict = compare(config, case, observation)
+    if not changes:
+        return verdict
+    status = observation.status
+    if status is not None and 200 <= status < 300:
+        # access was granted: the access rule stands, and the write is stated as a fact
+        return replace(verdict, detail=f"{verdict.detail}; state changed: {_where(changes)}")
+    observed = classify(observation)
+    shown = f"HTTP {status}" if status is not None else _clean(observation.error or "no response", 30)
+    return Verdict(
+        Status.FINDING_CANDIDATE,
+        observed.value if observed is not None else None,
+        f"the request was not accepted ({shown}) but state changed: {_where(changes)}",
+        MUTATION_RULE,
+        "high",
+        "high",
+    )
 
 
 def _check_allowed(config: Config, case: Any, obs: Observation, ok: Verdict) -> Verdict:  # noqa: PLR0911

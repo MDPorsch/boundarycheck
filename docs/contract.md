@@ -7,7 +7,8 @@ Design background and the owner's decisions are in
 
 ## 1. What a run is
 
-`boundarycheck test` plans a bounded set of **read-only** requests (principal x action x resource),
+`boundarycheck test` plans a bounded set of requests (principal x action x resource), **reads everywhere and
+refused writes on the in-process fixture only** (s9),
 sends each, and compares what the target did with what an **independent, declared policy** says it
 should do. The policy is written by the assessor in the config file. The tool never derives an
 expectation from the target.
@@ -98,7 +99,9 @@ YAML, loaded by a hardened loader: size cap (256 KiB) checked before parsing, `y
 only (no tags, no object construction), **aliases and anchors refused**, **duplicate keys refused**,
 nesting depth capped, strict schema (`extra="forbid"`, no coercion: an unquoted `1234` where a string
 is required is an error), every identifier validated against `[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}`,
-only `GET` and `HEAD` accepted. **Credentials are never in the config**: a principal names an
+only `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` accepted (a write needs a state-aware transport,
+s9; an optional `body` is a static JSON object, at most 4096 bytes and 6 levels deep, and only on a write).
+**Credentials are never in the config**: a principal names an
 environment variable (live) and/or a fixture key (fixture). Errors name the location and the problem,
 never the offending value, and never carry a traceback to the user.
 
@@ -121,7 +124,9 @@ JSON is the source of truth (`schema_version`, tool version, scope id, target la
 explicit attestation line, per-case `id, rule_id, status, severity, confidence, expected, observed,
 redacted_evidence_refs, limitations, review_state`, a summary and run-level limitations). Markdown is a
 rendering of the same data. Every report states that `no_issue_observed` does not mean "secure", that
-the policy is the assessor's, and that v0.1 sends no writes. SARIF is not produced.
+the policy is the assessor's, and that writes are checked only on the fixture. Every case carries
+`state_changes` (empty for a read): the table, primary key and kind of each row a write changed, never a
+value. SARIF is not produced.
 
 ## 9. Write checks and the state diff (fixture transport only)
 
@@ -149,11 +154,13 @@ A config may declare **write actions** (`POST`, `PUT`, `PATCH`, `DELETE`) with a
    | an unmapped status | unchanged | `inconclusive` |
    | snapshot taken before or after failed | n/a | `error`; never `no_issue_observed` |
 
-5. After any case whose diff is not empty the engine **restores the pristine state**, so one flaw
-   cannot colour the answers to later cases. A restore failure aborts the remaining write cases
-   (`error` for the case, `not_run` for the rest).
+5. After any case whose diff is not empty the engine **restores the pristine state and checks that it is
+   pristine again**, so one flaw cannot colour the answers to later cases. A failed snapshot, a failed
+   restore or a restore that does not restore halts the remaining write cases (`not_run`); a snapshot
+   failure after a request is `error` for that case, while a change that was already seen stays a finding.
+   A request that fails (an exception) after it wrote is still a finding.
 6. A transport that is **not** state-aware gets `not_run` for every write case ("write checks need a
-   state snapshot; use the fixture transport"), so the run exits `2`. `--reads-only` omits write
+   state snapshot..."), checked before credentials, so the run exits `2` and no write was sent. `--reads-only` omits write
    cases instead, says so in the run limitations, and does not count them.
 7. The diff names the **table, the primary key and the kind** (added, removed, modified). It never
    carries a value. Primary keys of the lab are synthetic ids; an adapter for a real system must not

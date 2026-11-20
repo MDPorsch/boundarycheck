@@ -204,6 +204,7 @@ def test_live_without_credentials_cannot_be_clean(tmp_path: Path) -> None:
             str(_live_config(tmp_path, server.base_url)),
             "--transport",
             "live",
+            "--reads-only",  # M4: without it the first not_run is a write check (no state snapshot), not the credential
             "--runs-dir",
             str(tmp_path / "r"),
         )
@@ -315,7 +316,10 @@ def test_plan_lists_the_write_requests_and_marks_that_they_carry_a_body() -> Non
 def test_a_fixture_run_with_writes_exits_zero_on_the_patched_lab(tmp_path: Path) -> None:
     out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(tmp_path / "r"))
     assert out.exit_code == 0, out.output
-    assert "not exercised" in out.output.lower() or "not exercised" in (next((tmp_path / "r").iterdir()) / "report.md").read_text().lower()
+    assert (
+        "not exercised" in out.output.lower()
+        or "not exercised" in (next((tmp_path / "r").iterdir()) / "report.md").read_text().lower()
+    )
 
 
 def test_the_fifth_flaw_is_detected_by_the_cli_and_names_the_mutation_rule(tmp_path: Path) -> None:
@@ -342,7 +346,9 @@ def test_live_with_write_actions_never_sends_a_write_and_cannot_be_clean(tmp_pat
         config = tmp_path / "live.yaml"
         config.write_text(EXAMPLE.read_text().replace("http://127.0.0.1:8099", server.base_url))
         env = {"BC_TOKEN_ALICE": fake_token()}
-        out = _invoke("test", "--config", str(config), "--transport", "live", "--runs-dir", str(tmp_path / "r"), env=env)
+        out = _invoke(
+            "test", "--config", str(config), "--transport", "live", "--runs-dir", str(tmp_path / "r"), env=env
+        )
         assert out.exit_code != 0, out.output[-400:]
         assert not any(r["method"] != "GET" for r in server.requests), "a write reached a live target"
     report = json.loads((next((tmp_path / "r").iterdir()) / "report.json").read_text())

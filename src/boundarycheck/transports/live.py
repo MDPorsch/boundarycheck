@@ -166,9 +166,14 @@ class LiveTransport:
         if slot > now:
             await self._sleep(slot - now)
 
-    async def send(self, method: str, path: str, principal: str | None) -> Observation:
+    #: The live transport cannot report or restore the target's state, so it is never sent a write.
+    state_aware = False
+
+    async def send(self, method: str, path: str, principal: str | None, body: bytes | None = None) -> Observation:
         if method not in READ_METHODS:
-            raise PolicyRefusal(f"method {method[:10]!r} is not allowed: v0.1 sends GET and HEAD only")
+            raise PolicyRefusal(f"method {method[:10]!r} is not allowed: the live transport sends GET and HEAD only")
+        if body is not None:
+            raise PolicyRefusal("the live transport never sends a request body")
         if not valid_path(path):
             raise PolicyRefusal("the request path is not acceptable")
         if principal is not None and principal not in self._tokens:

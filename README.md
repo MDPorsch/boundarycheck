@@ -10,19 +10,21 @@ replays read-only requests as each test user and compares what the API actually 
 policy says it should do. Every result is one of seven honest states, and a failed or partial run can
 never look clean.
 
-> **Status: v0.1, alpha. Not published to PyPI** (install from source, below). Read-only and
-> **loopback-only**: it tests the API you run on your own machine. Use it only against systems you own
-> or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md) and [LIMITATIONS.md](LIMITATIONS.md).
+> **Status: v0.1, alpha.** Live targets are **loopback-only and read-only** (`GET`/`HEAD`): it tests the
+> API you run on your own machine. Write checks exist only against the built-in in-process lab. Use it
+> only against systems you own or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md)
+> and [LIMITATIONS.md](LIMITATIONS.md).
 
 ## What it does, and what it does not
 
 | It checks | It does **not** |
 |---|---|
-| Cross-tenant reads (BOLA): can user A read tenant B's object? | Test writes. v0.1 sends `GET`/`HEAD` only, so flaws that need a write to show are **not detected** |
+| Cross-tenant reads (BOLA): can user A read tenant B's object? | Test writes on a **live** target: it sends `GET`/`HEAD` only, so a write-path flaw there is **not detected** |
 | Role limits on read routes (BFLA): can a viewer reach an admin route? | Decide whether your policy is *right*: it judges the API against the policy you give it |
 | Hidden objects: does a forbidden object answer exactly like a missing one? | Prove an API is secure: `no_issue_observed` means one request matched the policy, nothing more |
 | Field exposure: does a response carry a field that role should not see? | Test timing channels, concurrency, rate limits or anything it was not told about |
-| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host (that is planned for v0.2) |
+| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host (planned for v0.2: a scoped, HTTPS-only, allow-listed design) |
+| Refused writes (fixture only): does a request the policy says must be refused still **change a row**, whatever status it returns? | Send a write the policy allows: that would test functionality, and it would change state |
 
 ## Try it in two minutes (no network, no credentials)
 
@@ -36,24 +38,42 @@ uv sync                                   # needs uv (https://docs.astral.sh/uv/
 uv run boundarycheck test --config examples/lab.yaml --transport fixture
 ```
 
-Real output on the patched lab (338 cases: 240 requests plus 98 concealment comparisons):
+Real output on the patched lab (419 cases: 240 reads, 81 refused writes, 98 concealment comparisons):
 
 ```text
 boundarycheck 0.1.0.dev0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
-cases: no_issue_observed: 338, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 338)
+cases: no_issue_observed: 419, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 419)
+  note: 7 write combination(s) that the policy allows were not exercised by design: write checks send only requests the policy says must be refused.
 exit code 0. Note: no_issue_observed does not mean the target is secure.
 ```
 
 Now break one control on purpose and watch it get caught (flags: `TENANT_PREDICATE_OMITTED`,
-`ROLE_CHECK_MISSING`, `PRIVATE_PROPERTY_SERIALIZED`, `MARKET_BOUNDARY_OMITTED`):
+`ROLE_CHECK_MISSING`, `PRIVATE_PROPERTY_SERIALIZED`, `MARKET_BOUNDARY_OMITTED`,
+`WRITE_BEFORE_AUTHORIZATION`):
 
 ```bash
 uv run boundarycheck test --config examples/lab-vulnerable.yaml --transport fixture --fixture-flaws ROLE_CHECK_MISSING
 ```
 
 ```text
-cases: no_issue_observed: 246, finding_candidate: 3, ... (total 249)
-  FINDING BC-0058 BC-ROLE-01 [high] bob:contact.private.read:PA1: expected deny_forbidden (role_denied), observed allow (HTTP 200): access was granted where the policy denies it
+cases: no_issue_observed: 281, finding_candidate: 5, ... (total 286)
+  FINDING BC-0067 BC-ROLE-01 [high] bob:contact.private.read:PA1: expected deny_forbidden (role_denied), observed allow (HTTP 200): access was granted where the policy denies it
+  FINDING BC-0076 BC-ROLE-01 [high] bob:project.write:PA1: expected deny_forbidden (role_denied), observed allow (HTTP 200): access was granted where the policy denies it; state changed: projects:... (modified)
+  ...
+exit code 1.
+```
+
+The fifth flaw is the interesting one: the lab **writes first and then refuses**, so every response is
+the correct `403`/`404`. A status-only runner calls it clean (try `--reads-only`: 249 clean, exit 0).
+The state diff finds it:
+
+```bash
+uv run boundarycheck test --config examples/lab-vulnerable.yaml --transport fixture --fixture-flaws WRITE_BEFORE_AUTHORIZATION
+```
+
+```text
+cases: no_issue_observed: 265, finding_candidate: 21, ... (total 286)
+  FINDING BC-0076 BC-MUTATION-01 [high] bob:project.write:PA1: the request was not accepted (HTTP 403) but state changed: projects:... (modified)
   ...
 exit code 1.
 ```
@@ -94,13 +114,17 @@ Two situations are worth knowing, and both are tested and documented rather than
 
 * **A wrong policy looks like a vulnerable API.** The tool judges against the policy it was given.
   Tell it that viewers may read private contacts and a *correct* API is reported as a (low-severity)
-  `finding_candidate`. That is why a finding is a candidate and confidence is never `high`.
+  `finding_candidate`. That is why a finding is a candidate and, for a mismatch with the policy, confidence is
+  never `high`. The one exception is `BC-MUTATION-01` (a refused request that still changed state), which
+  does not depend on the policy being right (D-B18).
 * **An answer the tool cannot map is `inconclusive`, never clean.** The lab answers `422` for an id
   that is not a UUID; those cases are `inconclusive` and the run exits `2`.
 
 ## How it stays safe
 
-* **Read-only and loopback-only.** Only `GET`/`HEAD`. The base URL must be `http://` on `127.0.0.0/8`,
+* **Loopback-only and read-only on a live target.** Only `GET`/`HEAD`, and never a request body: a write
+  is sent only by the in-process fixture, only where the policy says it must be refused, and its effect
+  is judged by a raw-SQL snapshot diff. The base URL must be `http://` on `127.0.0.0/8`,
   `::1` or `localhost`. A name is resolved once, every address must be loopback, and the connection
   goes to the checked IP literal; the connected peer is verified again. Redirects are never followed,
   proxy variables are ignored, bodies are capped *after* decompression, and there is a timeout, a rate
@@ -130,7 +154,7 @@ git clone --recurse-submodules https://github.com/MDPorsch/boundarycheck && cd b
 uv sync
 uv run pytest -q                                  # unit, negative, integration (against the lab) and packaging tests
 uv run ruff check . && uv run ruff format --check . && uv run mypy
-uv run python tools/mutation.py                   # optional, ~30 min: inject 98 security bugs, expect every one caught
+uv run python tools/mutation.py                   # optional, ~30 min: inject 145 security bugs, expect every one caught
 uv run python tools/secret_scan.py                # optional: gitleaks over all history + tree (brew install gitleaks)
 ```
 
