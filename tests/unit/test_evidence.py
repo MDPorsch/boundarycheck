@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tests.support import FakeTransport, compliant, mini, parse
+from tests.support import FakeTransport, compliant, fake_token, mini, parse
 
 pytestmark = pytest.mark.milestone("S1")
 
@@ -65,8 +65,9 @@ async def test_nothing_is_written_when_a_secret_would_be_stored(tmp_path: Path) 
     cfg = parse(mini())
     result = await run(cfg, FakeTransport(compliant(cfg)))
     store = RunStore(tmp_path / "runs")
+    token = fake_token()
     with pytest.raises(SecretLeakError):
-        store.save(result, "report with tok-" + "Zq81xKd02LmPq77 inside", "md", ["tok-" + "Zq81xKd02LmPq77"])
+        store.save(result, f"report with {token} inside", "md", [token])
     assert not (tmp_path / "runs").exists() or list((tmp_path / "runs").iterdir()) == []
 
 
@@ -80,6 +81,7 @@ async def test_nothing_is_written_when_a_secret_would_be_stored(tmp_path: Path) 
         "x" * 80,
         "20261119T201500Z-ZZZZZZZZ",
         "20261119T201500Z-abcdef1",
+        "20261119T201500Z-abcdef12\n",
         ".hidden",
     ],
 )
@@ -171,3 +173,14 @@ def test_bad_ages_are_refused(text: str) -> None:
 
     with pytest.raises(StoreError):
         parse_age(text)
+
+
+def test_a_symbolic_link_is_refused_as_the_runs_directory(tmp_path: Path) -> None:
+    from boundarycheck.evidence import RunStore, StoreError  # noqa: PLC0415
+
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    os.symlink(real, link)
+    with pytest.raises(StoreError, match=r"(?i)symbolic link"):
+        RunStore(link).list_runs()

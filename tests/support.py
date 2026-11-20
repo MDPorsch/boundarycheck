@@ -7,6 +7,7 @@ import contextlib
 import copy
 import gzip
 import json
+import secrets
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -21,6 +22,22 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "lab.yaml"
 VULN_EXAMPLE = ROOT / "examples" / "lab-vulnerable.yaml"
 LOOPBACK = "127.0.0.1"
+
+
+def fake_token(label: str = "tok") -> str:
+    """A random, token-shaped credential made at run time, so the repository holds no secret-looking literal."""
+    return f"{label}-{secrets.token_urlsafe(18)}"
+
+
+def fake_jwt() -> str:
+    """A random, JWT-shaped string (three base64url segments starting with the usual header prefix)."""
+    import base64  # noqa: PLC0415
+
+    def seg(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = seg(b'{"alg":"EdDSA","typ":"JWT"}')
+    return f"{header}.{seg(secrets.token_bytes(24))}.{seg(secrets.token_bytes(48))}"
 
 
 def mini() -> dict[str, Any]:

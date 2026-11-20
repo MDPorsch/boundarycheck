@@ -6,9 +6,11 @@ import json
 
 import pytest
 
+from tests.support import fake_jwt, fake_token
+
 pytestmark = pytest.mark.milestone("S1")
 
-JWT = ".".join(("eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIiwianRpIjoiYWJjIn0", "c2lnbmF0dXJlLWJ5dGVzLWZvci10ZXN0aW5nLW9ubHk"))
+JWT = fake_jwt()
 
 
 def _r(**kw):  # type: ignore[no-untyped-def]
@@ -58,7 +60,7 @@ def test_masked_fields_are_replaced_at_any_depth_including_inside_lists() -> Non
 
 
 def test_an_exact_credential_value_is_removed_wherever_it_appears() -> None:
-    secret = "tok-" + "Zq81xKd02LmPq77"
+    secret = fake_token()
     out = _r(secrets=[secret]).text(f"echo {secret} and again {secret}")
     assert secret not in out and "[credential]" in out
     body = json.dumps({"k": secret}).encode()
@@ -88,7 +90,7 @@ def test_the_observation_blob_is_bounded_and_marks_truncation() -> None:
 def test_the_leak_guard_finds_a_secret_and_never_repeats_it() -> None:
     from boundarycheck.redact import SecretLeakError, assert_no_secrets  # noqa: PLC0415
 
-    secret = "tok-" + "Zq81xKd02LmPq77"
+    secret = fake_token()
     with pytest.raises(SecretLeakError) as info:
         assert_no_secrets(["clean", f"a {secret} b"], [secret])
     assert secret not in str(info.value)

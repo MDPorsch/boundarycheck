@@ -11,11 +11,11 @@ from typing import Any
 
 import pytest
 
-from tests.support import FakeServer, fake_server, gzip_bomb, slow
+from tests.support import FakeServer, fake_server, fake_token, gzip_bomb, slow
 
 pytestmark = pytest.mark.milestone("S1")
 
-TOKEN = "tok-" + "Zq81xKd02LmPq77AbCd"
+TOKEN = fake_token()
 
 
 def _make(base_url: str, **kw: Any) -> Any:
@@ -93,6 +93,7 @@ async def test_a_non_read_method_is_refused_before_a_socket_is_opened(method: st
         "/a\r\nHost: evil",
         "/" + "a" * 300,
         "/é",
+        "/v1/x\n",
     ],
 )
 async def test_a_path_that_could_smuggle_an_authority_traversal_or_header_is_refused(
@@ -336,3 +337,128 @@ async def test_requests_are_paced_by_the_rate_limit() -> None:
             await transport.send("GET", "/v1/x", "alice")
         await transport.aclose()
     assert sleeps == pytest.approx([0.2, 0.4])
+
+
+# ----------------------------------------------------- more claims, each with its own test ----
+def _raw_route(encoding: str, payload: bytes) -> Any:
+    def handler(h: Any) -> None:
+        h._send(200, {"content-type": "application/json", "content-encoding": encoding}, payload)
+
+    return handler
+
+
+async def test_a_gzip_or_deflate_body_within_the_cap_is_decoded() -> None:
+    import gzip  # noqa: PLC0415
+    import zlib  # noqa: PLC0415
+
+    with fake_server() as server:
+        server.routes["/g"] = _raw_route("gzip", gzip.compress(b'{"a": 1}'))
+        server.routes["/d"] = _raw_route("deflate", zlib.compress(b'{"b": 2}'))
+        assert (await _send(server, path="/g")).body == b'{"a": 1}'
+        assert (await _send(server, path="/d")).body == b'{"b": 2}'
+
+
+@pytest.mark.parametrize(
+    ("encoding", "payload"),
+    [("br", b"anything"), ("zstd", b"anything"), ("gzip", b"this is not gzip"), ("deflate", b"not deflate either")],
+)
+async def test_an_unknown_or_corrupt_content_encoding_is_unreadable_never_guessed(
+    encoding: str, payload: bytes
+) -> None:
+    with fake_server() as server:
+        server.routes["/x"] = _raw_route(encoding, payload)
+        obs = await _send(server, path="/x")
+        assert obs.error == "unreadable" and obs.body == b""
+
+
+async def test_a_response_that_drips_forever_hits_the_total_timeout_not_just_the_read_timeout() -> None:
+    import time as _time  # noqa: PLC0415
+
+    def drip(h: Any) -> None:
+        h.send_response(200)
+        h.send_header("Content-Type", "application/json")
+        h.send_header("Content-Length", "1000")
+        h.end_headers()
+        for _ in range(40):
+            try:
+                h.wfile.write(b"x")
+                h.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            _time.sleep(0.1)  # every gap is far below the per-read timeout
+
+    with fake_server() as server:
+        server.routes["/drip"] = drip
+        start = _time.monotonic()
+        obs = await _send(server, path="/drip", timeout=0.6)
+        assert obs.error == "timeout" and _time.monotonic() - start < 2.5
+
+
+async def test_a_cookie_set_by_the_target_is_never_replayed() -> None:
+    with fake_server() as server:
+        server.routes["/set"] = (
+            200,
+            {"content-type": "application/json", "set-cookie": "session=abc123; Path=/"},
+            b"{}",
+        )
+        server.json("/v1/x", {})
+        transport = _make(server.base_url)
+        await transport.send("GET", "/set", "alice")
+        await transport.send("GET", "/v1/x", "alice")
+        await transport.aclose()
+        assert all("cookie" not in {k.lower() for k in r["headers"]} for r in server.requests)
+
+
+def test_a_resolver_failure_is_an_egress_violation_not_a_crash() -> None:
+    from boundarycheck.model import EgressViolation  # noqa: PLC0415
+
+    def failing(host: str) -> list[str]:
+        raise socket.gaierror("no such host")
+
+    with pytest.raises(EgressViolation):
+        _make("http://localhost:8000", resolver=failing)
+
+
+async def test_the_default_resolver_reaches_a_real_server_through_the_name_localhost() -> None:
+    from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
+
+    with fake_server() as server:
+        server.json("/v1/x", {"ok": True})
+        transport = LiveTransport(f"http://localhost:{server.port}", credentials={}, environ={})
+        assert (await transport.send("GET", "/v1/x", None)).status == 200
+        await transport.aclose()
+
+
+def test_the_peer_must_be_exactly_the_checked_loopback_address_not_just_any_loopback_address() -> None:
+    from boundarycheck.model import EgressViolation  # noqa: PLC0415
+    from boundarycheck.transports.live import verify_peer  # noqa: PLC0415
+
+    stream = types.SimpleNamespace(get_extra_info=lambda name: ("127.0.0.2", 80) if name == "server_addr" else None)
+    with pytest.raises(EgressViolation):
+        verify_peer(types.SimpleNamespace(extensions={"network_stream": stream}), "127.0.0.1")
+
+
+def test_a_config_without_a_base_url_cannot_build_the_live_transport() -> None:
+    from boundarycheck.model import TransportUnavailable  # noqa: PLC0415
+    from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
+    from tests.support import mini, parse  # noqa: PLC0415
+
+    data = mini()
+    data["scope"]["target"].pop("base_url")
+    with pytest.raises(TransportUnavailable):
+        LiveTransport.from_config(parse(data), {})
+
+
+def test_from_config_reads_each_credential_from_the_named_variable_only() -> None:
+    from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
+    from tests.support import mini, parse  # noqa: PLC0415
+
+    transport = LiveTransport.from_config(
+        parse(mini()), {"BC_T_ALICE": TOKEN, "BC_T_BOB": "x", "UNRELATED": TOKEN + "zz"}
+    )
+    assert (
+        transport.has_credential("alice")
+        and not transport.has_credential("bob")
+        and not transport.has_credential("carol")
+    )
+    assert transport.secrets() == [TOKEN]

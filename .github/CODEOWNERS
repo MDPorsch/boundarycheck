@@ -1,0 +1,7 @@
+# Every change needs the owner's review.
+*                              @MDPorsch
+/.github/                      @MDPorsch
+/src/boundarycheck/transports/ @MDPorsch
+/src/boundarycheck/redact.py   @MDPorsch
+/src/boundarycheck/config.py   @MDPorsch
+/src/boundarycheck/evidence.py @MDPorsch

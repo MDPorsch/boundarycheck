@@ -31,7 +31,9 @@ def test_the_wheel_contains_the_package_and_never_the_lab(dist: Path) -> None:
     assert any(n.endswith("licenses/LICENSE") for n in names) and any(n.endswith("licenses/NOTICE") for n in names)
     meta = next(n for n in names if n.endswith("METADATA"))
     text = zipfile.ZipFile(wheel).read(meta).decode()
-    assert "tenant-boundary-lab" not in text and "License-Expression: Apache-2.0" in text
+    requires = [line for line in text.splitlines() if line.startswith(("Requires-Dist", "Provides-Extra"))]
+    assert requires and not [r for r in requires if "tenant" in r.lower() or "lab" in r.lower()]  # not even as an extra
+    assert "License-Expression: Apache-2.0" in text
     assert "Requires-Dist: pyyaml" in text and "Requires-Dist: typer" in text
     entry = zipfile.ZipFile(wheel).read(next(n for n in names if n.endswith("entry_points.txt"))).decode()
     assert "boundarycheck = boundarycheck.cli:app" in entry

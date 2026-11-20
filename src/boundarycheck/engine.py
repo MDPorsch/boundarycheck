@@ -31,8 +31,9 @@ STATIC_LIMITATIONS = (
 )
 ATTESTATION_FIXTURE = "In-process fixture run: no network was used and no authorization attestation is required."
 ATTESTATION_LIVE = (
-    "Loopback-only run: traffic cannot leave this machine, so a per-run authorization attestation is not required. "
-    "The operator remains responsible for testing only systems they own or are authorized to assess."
+    "Loopback-only run: a per-run authorization attestation is not required because this tool connected only to "
+    "loopback addresses. It cannot see where a loopback listener (an SSH tunnel, a local proxy) forwards traffic, "
+    "so the operator remains responsible for testing only systems they own or are authorized to assess."
 )
 
 

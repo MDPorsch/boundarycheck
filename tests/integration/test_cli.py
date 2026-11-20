@@ -11,14 +11,13 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from tests.support import EXAMPLE, VULN_EXAMPLE, fake_server
+from tests.support import EXAMPLE, VULN_EXAMPLE, fake_server, fake_token
 
 pytestmark = pytest.mark.milestone("S1")
 
 runner = CliRunner()
 CANARIES = {
-    f"BC_TOKEN_{n}": f"canary-{n}-" + "Zq81xKd02LmPq77AbCd"
-    for n in ("ALICE", "BOB", "CARLA", "DAVE", "ERIN", "FRANK", "GINA")
+    f"BC_TOKEN_{n}": fake_token(f"canary-{n}") for n in ("ALICE", "BOB", "CARLA", "DAVE", "ERIN", "FRANK", "GINA")
 }
 
 
@@ -150,6 +149,21 @@ def test_usage_errors_exit_two_before_anything_runs(tmp_path: Path, extra: list[
     assert out.exit_code == 2 and not (tmp_path / "r").exists()
 
 
+def test_an_unknown_flaw_is_named_as_a_usage_error_not_reported_as_an_internal_failure(tmp_path: Path) -> None:
+    out = _invoke(
+        "test",
+        "--config",
+        str(VULN_EXAMPLE),
+        "--transport",
+        "fixture",
+        "--fixture-flaws",
+        "NOT_A_FLAW",
+        "--runs-dir",
+        str(tmp_path / "r"),
+    )
+    assert out.exit_code == 2 and "unknown flaw" in out.output.lower() and "internal error" not in out.output
+
+
 def test_a_missing_lab_is_a_clear_message_not_a_traceback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in [n for n in sys.modules if n == "tenantlab" or n.startswith("tenantlab.")]:
         monkeypatch.setitem(sys.modules, name, None)  # already-imported submodules would otherwise win
@@ -225,7 +239,7 @@ def test_a_target_that_echoes_every_token_leaves_no_token_anywhere(tmp_path: Pat
     assert len(haystacks) > 10
     for token in CANARIES.values():
         assert not [h for h in haystacks if token in h], token
-        assert not [h for h in haystacks if token.removeprefix("canary-") in h]
+        assert not [h for h in haystacks if token.split("-", 2)[2] in h]  # nor the secret part on its own
     assert any("[credential]" in h for h in haystacks)
 
 
@@ -274,3 +288,16 @@ def test_purge_removes_an_old_run(tmp_path: Path) -> None:
     RunStore(tmp_path / "runs").save(result, to_json(result), to_markdown(result), [])
     out = _invoke("purge", "--older-than", "30d", "--runs-dir", str(tmp_path / "runs"))
     assert out.exit_code == 0 and result.run_id in out.output and not (tmp_path / "runs" / result.run_id).exists()
+
+
+def test_an_internal_failure_exits_two_never_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Exit 1 means 'findings'. A crash must never be mistaken for it."""
+    from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(LabFixtureTransport, "open", boom)
+    out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(tmp_path / "r"))
+    assert out.exit_code == 2 and "internal error" in out.output and "RuntimeError" in out.output
+    assert "Traceback" not in out.output and not (tmp_path / "r").exists()

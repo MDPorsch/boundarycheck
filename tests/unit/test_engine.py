@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from tests.support import FakeTransport, compliant, mini, parse
+from tests.support import FakeTransport, compliant, fake_token, mini, parse
 
 pytestmark = pytest.mark.milestone("S1")
 
@@ -226,7 +226,7 @@ async def test_concealment_with_an_unusable_peer_is_incomplete_not_clean() -> No
 async def test_an_echoed_credential_is_removed_from_the_evidence() -> None:
     from boundarycheck.model import Observation  # noqa: PLC0415
 
-    token = "tok-" + "Zq81xKd02LmPq77"
+    token = fake_token()
     cfg = parse(mini())
 
     def echo(case: Any, obs: Any) -> Any:
@@ -267,3 +267,25 @@ async def test_evidence_refs_point_at_stored_blobs_by_their_sha256() -> None:
     assert refs and refs <= set(result.evidence)
     for sha, blob in result.evidence.items():
         assert hashlib.sha256(json.dumps(blob, sort_keys=True, separators=(",", ":")).encode()).hexdigest() == sha
+
+
+async def test_the_leak_guard_is_a_real_backstop_when_redaction_misses_a_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pattern redaction is best effort. If it lets an exact credential through (simulated here by a
+    redactor that does nothing), the engine must still refuse to keep that evidence."""
+    from boundarycheck import redact  # noqa: PLC0415
+    from boundarycheck.model import Observation  # noqa: PLC0415
+
+    token = fake_token()
+    monkeypatch.setattr(redact.Redactor, "text", lambda self, value: value)
+    cfg = parse(mini())
+
+    def echo(case: Any, obs: Any) -> Any:
+        if case.key == "alice:project.read:PA1":
+            return Observation(status=200, headers={"content-type": "text/plain"}, body=token.encode())
+        return obs
+
+    result = await _run(cfg, FakeTransport(compliant(cfg, tweak=echo), secrets=[token]))
+    leaked = next(c for c in result.cases if c.key == "alice:project.read:PA1")
+    assert leaked.status.value == "error" and leaked.evidence_refs == [] and token not in repr(result.evidence)

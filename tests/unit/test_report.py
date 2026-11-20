@@ -137,3 +137,21 @@ async def test_a_clean_run_report_does_not_say_secure() -> None:
     md = to_markdown(result).lower()
     # the only place the word may appear is the disclaimer that says the opposite
     assert md.count("is secure") == md.count("does not mean the target is secure") and "no vulnerabilities" not in md
+
+
+async def test_markdown_is_safe_against_hostile_text_that_comes_from_the_config() -> None:
+    """Labels are free text chosen by whoever writes the config (and may be pasted from elsewhere)."""
+    from boundarycheck.report import to_markdown  # noqa: PLC0415
+
+    data = mini()
+    evil = "x\n# Injected heading\n| a | b |\n<script>1</script> [l](http://evil.invalid)"
+    data["scope"]["target"]["label"] = evil
+    data["principals"]["alice"]["label"] = evil
+    _cfg, result = await _result(data=data)
+    md = to_markdown(result)
+    assert "\n# Injected" not in md and "<script>" not in md and "](http://evil.invalid)" not in md
+    assert "\n| a | b |" not in md
+    # structure, not just escaping: a label must stay on ONE line, so the next bullet follows it directly
+    lines = md.splitlines()
+    at = next(i for i, ln in enumerate(lines) if ln.startswith("* scope:"))
+    assert lines[at + 1].startswith("* transport:")

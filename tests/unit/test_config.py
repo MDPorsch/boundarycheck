@@ -335,3 +335,62 @@ def test_an_error_never_echoes_the_offending_value() -> None:
     with pytest.raises(_err()) as info:
         parse_config(dump(data))
     assert "lowercase-secret-value-12345" not in str(info.value)
+
+
+# ----------------------------------------- properties that only one layer protects ----
+def test_a_numeric_limit_must_be_a_number_not_a_string_that_looks_like_one() -> None:
+    data = mini()
+    data["scope"]["target"]["request_budget"] = "5"
+    _bad(dump(data))
+    data = mini()
+    data["scope"]["target"]["rate_limit_rps"] = "5"
+    _bad(dump(data))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/projects/{project_id}\n",
+        "/v1/projects/{project_id}/../x",
+        "/v1/projects/{project_id}/./x",
+        "/v1/projects/{project_id}/..",
+    ],
+)
+def test_a_path_is_checked_whole_a_trailing_newline_or_a_dot_segment_is_not_hidden(path: str) -> None:
+    data = mini()
+    data["actions"][0]["path"] = path  # every parameter used here IS supplied: only the path rule can refuse it
+    _bad(dump(data))
+
+
+@pytest.mark.parametrize("name", ["BC_X\n", "BC_X ", " BC_X"])
+def test_an_environment_variable_name_is_checked_whole(name: str) -> None:
+    data = mini()
+    data["principals"]["alice"]["credential"] = {"env": name}
+    _bad(dump(data))
+
+
+def test_an_identifier_with_a_trailing_newline_is_refused() -> None:
+    data = mini()
+    data["resources"][4]["ids"]["project_id"] = "pa1\n"
+    _bad(dump(data))
+
+
+def test_an_ipv4_mapped_ipv6_address_is_never_treated_as_loopback() -> None:
+    for url in ("http://[::ffff:127.0.0.1]:8000", "http://[::ffff:7f00:1]:8000"):
+        data = mini()
+        data["scope"]["target"]["base_url"] = url
+        _bad(dump(data), "loopback")
+
+
+def test_a_credential_is_a_mapping_with_known_keys_only() -> None:
+    data = mini()
+    data["principals"]["alice"]["credential"] = "tok-not-a-mapping"
+    _bad(dump(data))
+
+
+def test_merge_keys_are_refused_because_they_can_hide_a_duplicate_key() -> None:
+    """`<<` merges another mapping in and lets an explicit key silently override it: it would bypass the
+    duplicate-key check (and needs no alias, so the alias/anchor refusal does not cover it)."""
+    text = dump(mini()).replace("scope:\n", "scope:\n  <<: {id: other}\n", 1)
+    assert "<<:" in text
+    _bad(text, "merge")

@@ -1,0 +1,22 @@
+# Decisions
+
+Accepted trade-offs and spec interpretations, each with its reason so it can be challenged. "Owner
+approval" says whether the owner confirmed it (Given), delegated it, or it is still awaited.
+
+| ID | Decision | Owner approval |
+|---|---|---|
+| D-B01 | **Own repository** (`boundarycheck`), with `tenant-boundary-lab` as its reference target and test fixture, consumed as a **pinned git submodule** at `lab/`, installed editable and for development only. The product never depends on the lab at run time, so installing it never installs the vulnerable variant. | Given (2026-11-19) |
+| D-B02 | **The lab's M4 runner and oracle engine is this product**, built once. | Given |
+| D-B03 | **Config is YAML with a hardened loader** (size cap, no tags/aliases/anchors/merge keys/duplicate keys, depth cap, strict schema). Credentials come from environment variables, never from the config. OS keychain support is a later optional extra. | Given |
+| D-B04 | **Exit codes:** `0` only if there is at least one case and every case is `no_issue_observed`; `1` if any case is a finding candidate (this wins over `2`); `2` for everything else, including a crash. | Given |
+| D-B05 | **Name: `boundarycheck`.** Availability must be re-checked before any publication. | Given |
+| D-B06 | **v0.1 live mode is loopback-only** (the owner asked for "easy to use"); remote hosts are v0.2. One command, no per-run attestation flag, because the tool only connects to loopback addresses. The wording was corrected on 2026-11-19: the tool cannot see where a loopback listener forwards (see BL-11). | Resolved by the assistant on the owner's "easy to use"; the owner may overrule |
+| D-B07 | **Read-only in v0.1.** Only `GET`/`HEAD` are accepted by the schema, the engine and the transports (three layers). Write-path checks need a state-snapshot adapter and arrive later. | Given (addendum) |
+| D-B08 | **The oracle imports nothing that talks to a target**, enforced by an AST test; only one module may import the lab, and lazily. A bug in the thing being judged cannot be mirrored into the judge. | No |
+| D-B09 | **Concealment is derived, not configured:** a hidden object must answer like a declared missing object (status, selected headers, body shape minus declared volatile fields). Without a declared missing object of that kind the report says concealment was not tested. | No |
+| D-B10 | **Licence: Apache-2.0**, chosen by the assistant on 2026-11-19 under the owner's "do what needs to be done"; the owner never named one. **An assumption to confirm or change before anyone relies on it.** | **Awaited** |
+| D-B11 | **A forgotten scoped attribute does not hide a resource.** A resource that does not declare an attribute is not subject to the tenant's allowed values, so the failure direction is a visible low-severity "denied where the policy allows" (fails closed), not a high-severity false alarm. | No |
+| D-B12 | **CI is safe by construction** (same policy as the lab, D-49 there): actions pinned to a full commit SHA, `permissions: {}` with `contents: read` per job, `pull_request` never `pull_request_target`, no secrets, `persist-credentials: false`, frozen lockfile, checksum-verified gitleaks, Dependabot for actions, uv and the submodule pin, CodeQL. | Given (CI requested) |
+| D-B13 | **The repository is public** (owner instruction 2026-11-19), made public only after CI had run green while it was private. Repository settings are recorded below once applied. | Given |
+| D-B14 | **Mutation testing is part of the definition of done** for a security property (`tools/mutation.py`). A mutant that does not apply is stale, never a pass; the baseline must be green first. | No |
+| D-B15 | **No PyPI publication.** Installing is from source until the owner approves a release. | Standing |
