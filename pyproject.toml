@@ -35,6 +35,11 @@ Source = "https://github.com/MDPorsch/boundarycheck"
 Issues = "https://github.com/MDPorsch/boundarycheck/issues"
 Security = "https://github.com/MDPorsch/boundarycheck/security/policy"
 
+[project.optional-dependencies]
+keychain = [
+    "keyring>=25.6,<26",
+]
+
 [dependency-groups]
 dev = [
     "hypothesis>=6.170.15,<7",
@@ -49,6 +54,7 @@ dev = [
     # it is not a runtime dependency, so installing boundarycheck never installs the lab (and never
     # the deliberately vulnerable variant, which the lab's own wheel excludes).
     "tenant-boundary-lab[lab]",
+    "keyring>=25.6,<26",
 ]
 
 [tool.uv.sources]
