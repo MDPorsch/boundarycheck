@@ -71,7 +71,9 @@ async def test_findings_are_results_with_rule_level_message_and_fingerprint() ->
     assert doc["runs"][0]["invocations"][0]["exitCode"] == 1 and run["invocations"][0]["executionSuccessful"] is True
 
 
-@pytest.mark.parametrize(("severity", "level"), [("high", "error"), ("medium", "warning"), ("low", "note"), (None, "warning")])
+@pytest.mark.parametrize(
+    ("severity", "level"), [("high", "error"), ("medium", "warning"), ("low", "note"), (None, "warning")]
+)
 def test_severity_maps_to_a_sarif_level(severity: str | None, level: str) -> None:
     from boundarycheck.sarif import level_for  # noqa: PLC0415
 
@@ -95,7 +97,9 @@ async def test_every_rule_the_tool_can_emit_is_defined_once_and_findable() -> No
 
 async def test_a_state_diff_finding_carries_its_changed_rows_by_name_only() -> None:
     cfg = parse(write_config())
-    transport = StatefulFake(compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH")
+    transport = StatefulFake(
+        compliant(cfg), mutates=lambda m, p, who: who == "bob" and p.endswith("pa1") and m == "PATCH"
+    )
     doc = _valid(_sarif(await _run(cfg, transport)))
     item = next(r for r in doc["runs"][0]["results"] if r["ruleId"] == "BC-MUTATION-01")
     assert item["properties"]["state_changes"] == [{"table": "projects", "key": "p-1", "kind": "modified"}]
@@ -108,21 +112,29 @@ async def test_a_run_that_was_not_clean_is_not_a_clean_sarif() -> None:
     result = await _run(cfg, FakeTransport(compliant(cfg), creds={"alice"}))  # nobody else has a credential
     doc = _valid(_sarif(result))
     invocation = doc["runs"][0]["invocations"][0]
-    assert doc["runs"][0]["results"] == [] and invocation["exitCode"] == 2 and invocation["executionSuccessful"] is False
+    assert (
+        doc["runs"][0]["results"] == [] and invocation["exitCode"] == 2 and invocation["executionSuccessful"] is False
+    )
     notes = invocation["toolExecutionNotifications"]
     assert notes and all(n["level"] in {"warning", "error"} for n in notes)
     assert any("not_run" in n["message"]["text"] and "no credential" in n["message"]["text"] for n in notes)
 
 
-async def test_notifications_are_capped_and_the_cap_is_announced() -> None:
+async def test_notifications_are_capped_and_the_cap_is_announced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("boundarycheck.sarif.MAX_NOTIFICATIONS", 20)
     from boundarycheck.sarif import MAX_NOTIFICATIONS  # noqa: PLC0415
 
+    assert MAX_NOTIFICATIONS == 20
     cfg = parse(mini())
     result = await _run(cfg, FakeTransport(compliant(cfg), creds=set()))  # every credentialed case is not_run
     notes = _valid(_sarif(result))["runs"][0]["invocations"][0]["toolExecutionNotifications"]
     assert len(notes) <= MAX_NOTIFICATIONS + 1
     not_run = sum(1 for c in result.cases if c.status.value != "no_issue_observed")
-    assert not_run > MAX_NOTIFICATIONS and "more" in notes[-1]["message"]["text"] and str(not_run - MAX_NOTIFICATIONS) in notes[-1]["message"]["text"]
+    assert (
+        not_run > MAX_NOTIFICATIONS
+        and "more" in notes[-1]["message"]["text"]
+        and str(not_run - MAX_NOTIFICATIONS) in notes[-1]["message"]["text"]
+    )
 
 
 async def test_an_error_case_is_an_error_level_notification() -> None:
@@ -157,18 +169,40 @@ async def test_an_unknown_action_line_falls_back_to_line_one() -> None:
     assert doc["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"] == 1
 
 
-@pytest.mark.parametrize("bad", ["/etc/passwd", "../x.yaml", "a/../b.yaml", "C:\\x.yaml", "file:///x", "https://evil/x", "x\ny.yaml", "", "a b\x00.yaml"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "/etc/passwd",
+        "../x.yaml",
+        "a/../b.yaml",
+        "C:\\x.yaml",
+        "file:///x",
+        "https://evil/x",
+        "x\ny.yaml",
+        "",
+        "a b\x00.yaml",
+    ],
+)
 def test_a_config_uri_is_a_safe_relative_path_or_it_becomes_the_file_name(bad: str) -> None:
     from boundarycheck.sarif import safe_uri  # noqa: PLC0415
 
     got = safe_uri(bad)
-    assert not got.startswith(("/", "file:", "http")) and ".." not in got and "\n" not in got and "\x00" not in got and "\\" not in got
+    assert (
+        not got.startswith(("/", "file:", "http"))
+        and ".." not in got
+        and "\n" not in got
+        and "\x00" not in got
+        and "\\" not in got
+    )
 
 
 def test_a_plain_relative_config_path_is_kept() -> None:
     from boundarycheck.sarif import safe_uri  # noqa: PLC0415
 
-    assert safe_uri("ci/boundarycheck.yaml") == "ci/boundarycheck.yaml" and safe_uri("boundarycheck.yaml") == "boundarycheck.yaml"
+    assert (
+        safe_uri("ci/boundarycheck.yaml") == "ci/boundarycheck.yaml"
+        and safe_uri("boundarycheck.yaml") == "boundarycheck.yaml"
+    )
 
 
 def test_action_lines_reads_the_line_of_each_declaration_in_block_and_flow_style() -> None:
@@ -194,7 +228,11 @@ async def test_a_sarif_file_holds_no_credential_and_no_response_body() -> None:
 
     def tweak(case: Any, obs: Any) -> Any:
         body = json.dumps({"id": "x", "email_private": "SENTINEL-BODY", "echo": secret}).encode()
-        return Observation(status=200, headers=obs.headers, body=body) if case.key == "bob:contact.private.read:PA1" else obs
+        return (
+            Observation(status=200, headers=obs.headers, body=body)
+            if case.key == "bob:contact.private.read:PA1"
+            else obs
+        )
 
     result = await _run(cfg, FakeTransport(compliant(cfg, tweak=tweak), secrets=[secret]))
     text = _sarif(result)
@@ -224,13 +262,23 @@ async def test_the_privacy_notice_travels_inside_the_file() -> None:
 
 async def test_the_output_is_deterministic_and_fingerprints_follow_the_scope() -> None:
     cfg = parse(mini())
-    result = await _run(cfg, FakeTransport(compliant(cfg, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r1")
+    result = await _run(
+        cfg, FakeTransport(compliant(cfg, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r1"
+    )
     assert _sarif(result) == _sarif(result)
     first = _valid(_sarif(result))["runs"][0]["results"][0]["partialFingerprints"]["boundarycheck/case/v1"]
     other = parse({**mini(), "scope": {**mini()["scope"], "id": "another"}})
-    result2 = await _run(other, FakeTransport(compliant(other, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r2")
+    result2 = await _run(
+        other, FakeTransport(compliant(other, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r2"
+    )
     second = _valid(_sarif(result2))["runs"][0]["results"][0]["partialFingerprints"]["boundarycheck/case/v1"]
-    again = _valid(_sarif(await _run(cfg, FakeTransport(compliant(cfg, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r3")))["runs"][0]["results"][0]["partialFingerprints"]["boundarycheck/case/v1"]
+    again = _valid(
+        _sarif(
+            await _run(
+                cfg, FakeTransport(compliant(cfg, tweak=_tweak_to(200, "bob:contact.private.read:PA1"))), run_id="r3"
+            )
+        )
+    )["runs"][0]["results"][0]["partialFingerprints"]["boundarycheck/case/v1"]
     assert first == again and first != second
 
 
@@ -256,7 +304,9 @@ async def test_the_leak_guard_covers_the_sarif_file(tmp_path: Path) -> None:
     result = await _run(cfg, FakeTransport(compliant(cfg)))
     secret = fake_token("leak")
     with pytest.raises(SecretLeakError):
-        RunStore(tmp_path / "runs").save(result, to_json(result), to_markdown(result), [secret], sarif=_sarif(result) + secret)
+        RunStore(tmp_path / "runs").save(
+            result, to_json(result), to_markdown(result), [secret], sarif=_sarif(result) + secret
+        )
     assert not (tmp_path / "runs").exists() or not any((tmp_path / "runs").iterdir())
 
 
