@@ -10,8 +10,8 @@ replays read-only requests as each test user and compares what the API actually 
 policy says it should do. Every result is one of seven honest states, and a failed or partial run can
 never look clean.
 
-> **Status: v0.1.0, alpha.** Live targets are **loopback-only and read-only** (`GET`/`HEAD`): it tests the
-> API you run on your own machine. Write checks exist only against the built-in in-process lab. Use it
+> **Status: v0.2.0, alpha.** Live targets are read-only (`GET`/`HEAD`): your own machine, or **one declared
+> remote host** over verified HTTPS (see below). Write checks exist only against the built-in in-process lab. Use it
 > only against systems you own or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md)
 > and [LIMITATIONS.md](LIMITATIONS.md).
 
@@ -23,19 +23,19 @@ never look clean.
 | Role limits on read routes (BFLA): can a viewer reach an admin route? | Decide whether your policy is *right*: it judges the API against the policy you give it |
 | Hidden objects: does a forbidden object answer exactly like a missing one? | Prove an API is secure: `no_issue_observed` means one request matched the policy, nothing more |
 | Field exposure: does a response carry a field that role should not see? | Test timing channels, concurrency, rate limits or anything it was not told about |
-| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host (planned for v0.2: a scoped, HTTPS-only, allow-listed design) |
+| List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host freely: a remote target must be declared completely, https only, one host, public addresses unless you list a private range ([design](docs/remote-live-design.md)) |
 | Refused writes (fixture only): does a request the policy says must be refused still **change a row**, whatever status it returns? | Send a write the policy allows: that would test functionality, and it would change state |
 
 ## Install
 
 ```bash
 pipx install boundarycheck          # or: uv tool install boundarycheck
-boundarycheck --version             # 0.1.0
+boundarycheck --version             # 0.2.0
 ```
 
 Published on PyPI as [`boundarycheck`](https://pypi.org/project/boundarycheck/) through a protected
 release workflow with signed provenance ([docs/releasing.md](docs/releasing.md)). A PyPI install validates
-configs, plans, and runs `--transport live` against loopback; the `fixture` transport and the examples need
+configs, plans, and runs `--transport live` against loopback or one declared remote host; the `fixture` transport and the examples need
 a source checkout, as in the next section.
 
 ## Try it in two minutes (no network, no credentials)
@@ -53,7 +53,7 @@ uv run boundarycheck test --config examples/lab.yaml --transport fixture
 Real output on the patched lab (419 cases: 240 reads, 81 refused writes, 98 concealment comparisons):
 
 ```text
-boundarycheck 0.1.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
+boundarycheck 0.2.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
 cases: no_issue_observed: 419, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 419)
   note: 7 write combination(s) that the policy allows were not exercised by design: write checks send only requests the policy says must be refused.
 exit code 0. Note: no_issue_observed does not mean the target is secure.
@@ -105,6 +105,20 @@ uv run boundarycheck list-runs ; uv run boundarycheck report --run RUN_ID --form
 The config holds **no secrets**: a principal names the environment variable its token comes from.
 The policy is the heart of it, so write it from your requirements, not from the code under test.
 [`examples/lab.yaml`](examples/lab.yaml) is a complete, commented example.
+
+### A remote target (0.2.0)
+
+```bash
+uv run boundarycheck init --remote --output acme.yaml   # one https host, an authorization block, safe defaults
+$EDITOR acme.yaml                                       # the host (twice), your engagement reference, when it ends
+uv run boundarycheck preflight --config acme.yaml       # resolves the name, judges every address, sends NO request
+export BC_TOKEN_ALICE=...                               # TEST users' tokens, environment only
+uv run boundarycheck test --config acme.yaml --transport live --ack-authorization
+```
+
+It talks to the **one** host you declared, over verified TLS, to public addresses only unless you list a
+private range, at 2 requests per second by default, and its report says the authorization is your
+declaration and was not verified. Read the [design](docs/remote-live-design.md) before using it.
 
 ## Reading a result
 

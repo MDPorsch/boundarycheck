@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
 import yaml
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
@@ -24,7 +27,14 @@ from pydantic import (
     model_validator,
 )
 
-from boundarycheck.netcheck import NotLoopback, parse_loopback_base_url
+from boundarycheck.netcheck import (
+    AddressRefused,
+    NotLoopback,
+    check_address,
+    parse_address,
+    parse_target_url,
+    validate_networks,
+)
 
 MAX_CONFIG_BYTES: Final = 256 * 1024
 MAX_DEPTH: Final = 32
@@ -268,6 +278,32 @@ class FixtureRef(_Model):
     flaws: list[Ident] = Field(default_factory=list)
 
 
+REMOTE_DEFAULT_RPS: Final = 2.0
+REMOTE_MAX_RPS: Final = 20.0
+MAX_WINDOW_DAYS: Final = 366
+_HOST_ENTRY: Final = re.compile(
+    r"^(?P<host>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+    r"|\[[0-9a-f:.]{2,45}\])(?::(?P<port>[0-9]{1,5}))?$"
+)
+
+
+def _declared(entry: str) -> tuple[str, int]:
+    """(host, port) of one `allowed_hosts` entry: an exact lowercase ASCII name or IP literal."""
+    found = _HOST_ENTRY.fullmatch(entry) if len(entry) <= 260 else None
+    if found is None:
+        raise ValueError(
+            "allowed_hosts entries are exact lowercase ASCII host names or IP literals, "
+            "with an optional :port (no wildcards, no trailing dot, xn-- form for international names)"
+        )
+    host = found["host"]
+    if host.startswith("["):
+        host = host[1:-1]
+    port = int(found["port"]) if found["port"] else 443
+    if not 1 <= port <= 65535:
+        raise ValueError("allowed_hosts port is out of range")
+    return host, port
+
+
 class Target(_Model):
     label: Label
     fixture: FixtureRef | None = None
@@ -276,21 +312,132 @@ class Target(_Model):
     rate_limit_rps: float = Field(default=10.0, gt=0, le=1000)
     timeout_seconds: float = Field(default=10.0, gt=0, le=300)
     max_response_bytes: int = Field(default=1_048_576, ge=1024, le=16 * 1024 * 1024)
+    # Remote live mode (docs/remote-live-design.md). All three are ignored for a loopback target.
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allowed_networks: list[str] = Field(default_factory=list)
+    ca_bundle: Annotated[str, StringConstraints(min_length=1, max_length=512)] | None = None
 
     @field_validator("base_url")
     @classmethod
-    def _loopback_only(cls, value: str | None) -> str | None:
+    def _well_formed(cls, value: str | None) -> str | None:
         if value is not None:
             try:
-                parse_loopback_base_url(value)
+                parse_target_url(value)
             except NotLoopback as exc:
                 raise ValueError(str(exc)) from None
         return value
+
+    @field_validator("allowed_networks")
+    @classmethod
+    def _networks(cls, value: list[str]) -> list[str]:
+        try:
+            return validate_networks(value)
+        except ValueError as exc:
+            raise ValueError(f"allowed_networks: {exc}") from None
+
+    @property
+    def is_remote(self) -> bool:
+        return self.base_url is not None and parse_target_url(self.base_url)[3]
+
+    @property
+    def effective_rate_limit_rps(self) -> float:
+        """A remote host is asked gently unless the operator says otherwise (and never faster than 20/s)."""
+        if self.is_remote and "rate_limit_rps" not in self.model_fields_set:
+            return REMOTE_DEFAULT_RPS
+        return self.rate_limit_rps
+
+    @model_validator(mode="after")
+    def _remote_is_fully_declared(self) -> Target:
+        if self.base_url is None or not self.is_remote:
+            return self
+        _scheme, host, port, _remote = parse_target_url(self.base_url)
+        if len(self.allowed_hosts) != 1:
+            raise ValueError(
+                "a remote base_url needs allowed_hosts with exactly one entry, the same host "
+                "(and port, if it is not 443) as base_url"
+                if not self.allowed_hosts or len(self.allowed_hosts) > 1
+                else "allowed_hosts"
+            )
+        declared_host, declared_port = _declared(self.allowed_hosts[0])
+        if (declared_host, declared_port) != (host, port):
+            raise ValueError("allowed_hosts must name exactly the host and port of base_url")
+        try:
+            parse_address(host)
+        except AddressRefused:
+            pass  # a name: its addresses are checked when it is resolved, at run time
+        else:
+            try:
+                check_address(host, self.allowed_networks)
+            except AddressRefused as exc:
+                raise ValueError(f"base_url: {exc}") from None
+        if "rate_limit_rps" in self.model_fields_set and self.rate_limit_rps > REMOTE_MAX_RPS:
+            raise ValueError(f"rate_limit_rps for a remote target may be at most {REMOTE_MAX_RPS:g} per second")
+        return self
+
+
+def _plain_text(value: str) -> str:
+    if value != value.strip() or not value:
+        raise ValueError("must be plain text without leading or trailing space")
+    if any(unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} for ch in value):
+        raise ValueError("must not contain control, formatting or line-separator characters")
+    return value
+
+
+def _iso_timestamp(value: Any) -> Any:
+    """YAML turns an unquoted timestamp into a datetime; a quoted one stays text, so accept ISO 8601 text
+    too. Anything else (a date, a number, 'tomorrow') is left for the strict type to refuse."""
+    if isinstance(value, str):
+        if len(value) > 40:
+            raise ValueError("not an ISO 8601 timestamp")
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError("not an ISO 8601 timestamp") from None
+    return value
+
+
+Timestamp = Annotated[datetime, BeforeValidator(_iso_timestamp)]
+
+
+class Authorization(_Model):
+    """The operator's DECLARATION that the assessment is authorized. The tool cannot verify it."""
+
+    engagement: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+    not_before: Timestamp | None = None
+    not_after: Timestamp
+
+    @field_validator("engagement")
+    @classmethod
+    def _engagement(cls, value: str) -> str:
+        return _plain_text(value)
+
+    @field_validator("not_before", "not_after")
+    @classmethod
+    def _zone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("timestamps need a UTC offset, for example 2026-12-04T23:59:59Z")
+        return value
+
+    @model_validator(mode="after")
+    def _window(self) -> Authorization:
+        if self.not_before is not None:
+            if self.not_before >= self.not_after:
+                raise ValueError("not_before must be earlier than not_after")
+            if self.not_after - self.not_before > timedelta(days=MAX_WINDOW_DAYS):
+                raise ValueError(f"the authorization window may not be longer than {MAX_WINDOW_DAYS} days")
+        return self
 
 
 class Scope(_Model):
     id: Ident
     target: Target
+    authorization: Authorization | None = None
+
+    @model_validator(mode="after")
+    def _remote_needs_authorization(self) -> Scope:
+        if self.target.is_remote and self.authorization is None:
+            raise ValueError("a remote target needs an authorization block (engagement and not_after)")
+        return self
 
 
 class Config(_Model):

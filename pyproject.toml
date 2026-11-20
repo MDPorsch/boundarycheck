@@ -1,6 +1,6 @@
 [project]
 name = "boundarycheck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Check that an API enforces the authorization boundaries you declare: tenant isolation, roles, hidden objects and field exposure, compared against an independent policy."
 readme = "README.md"
 authors = [{ name = "Mohammed Orunsolu" }]

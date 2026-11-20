@@ -77,7 +77,7 @@ target, the transports or the engine (`tests/unit/test_independence.py`).
 * **Fixture transport** (`--transport fixture`): the built-in `tenant-boundary-lab` adapter runs the lab
   in process (no socket, ephemeral Ed25519 key, temporary SQLite database). It needs the lab installed
   from a source checkout; without it the run exits `2` with a message that says so.
-* **Live transport** (`--transport live`) is **loopback only** in v0.1:
+* **Live transport** (`--transport live`) has two modes. **Loopback** (v0.1, unchanged):
   * the base URL must be `http://` with a loopback IP literal (`127.0.0.0/8`, `::1`) or the name
     `localhost`; any other host is refused at config load and again at run time;
   * a name is resolved by the tool, **every** address must be loopback, and the connection is made to
@@ -88,6 +88,25 @@ target, the transports or the engine (`tests/unit/test_independence.py`).
   * redirects are never followed (a redirect is `policy_denied`); proxy environment variables are
     ignored; `Accept-Encoding: identity`; the **decoded** body is capped (default 1 MiB) and a request
     has a timeout; a request budget (default 500) and a rate limit apply; the budget is a hard stop.
+  **Remote** (v0.2, `docs/remote-live-design.md`, approved by the owner), to ONE declared
+  host and only then:
+  * `base_url` is `https://host[:port]`; `scope.target.allowed_hosts` holds exactly one entry, the same
+    host and port, in lowercase ASCII with no wildcard; an `authorization` block (an `engagement` and a
+    `not_after`) is required and the run needs `--ack-authorization`; the run refuses outside the
+    declared window (and a `not_after` more than 366 days away);
+  * the name is resolved **once** and **every** address must pass: public addresses by default; private,
+    loopback and shared ranges only if listed in `allowed_networks`; link-local (cloud metadata),
+    multicast, reserved and every IPv6 form that embeds an IPv4 address (mapped, NAT64, 6to4, Teredo)
+    never, and a listed range that would include one is refused at load;
+  * the connection goes to the checked address, with TLS 1.2 or newer, the certificate and the declared
+    **host name** always verified (an optional `ca_bundle` ADDS a private authority; nothing turns
+    verification off), the host name sent as SNI and `Host`; the connected peer must be the checked
+    address and pass the same policy;
+  * reads only, never a body, redirects never followed, proxy variables ignored; a lower default rate
+    (2 per second, at most 20) and the same budget, body cap and timeout;
+  * the report states that the authorization is the operator's declaration, not verified, and names
+    the host and the pinned address. `boundarycheck preflight` resolves and judges every address and sends
+    **no request**.
 * A timeout, connection failure or oversized body is `incomplete`; 429 and 5xx are `inconclusive`.
   Neither can ever be `no_issue_observed`.
 * These are properties of the tool. The tool cannot make a hostile network safe; a container or a

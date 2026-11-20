@@ -32,6 +32,7 @@ CFG, ORC, CMP, ENG, RED, EVI, LIV, LAB, REP, NET, MOD, CLI = (
     for n in ("config", "oracle", "comparator", "engine", "redact", "evidence", "transports/live", "transports/lab_fixture", "report", "netcheck", "model", "cli")
 )  # fmt: skip
 
+AUZ, TPL = f"{SRC}/authorization.py", f"{SRC}/template.py"
 PLN, STD, SQS = f"{SRC}/planner.py", f"{SRC}/statediff.py", f"{SRC}/transports/sqlite_state.py"
 
 M: dict[str, list[tuple[str, str, str]]] = {
@@ -46,7 +47,6 @@ M: dict[str, list[tuple[str, str, str]]] = {
     "config_size_cap_ignored": [(CFG, "if len(raw) > MAX_CONFIG_BYTES:", "if False:"), (CFG, "if target.stat().st_size > MAX_CONFIG_BYTES:", "if False:")],
     "config_unknown_keys_allowed": [(CFG, 'extra="forbid"', 'extra="ignore"')],
     "config_type_coercion_allowed": [(CFG, "strict=True,", "strict=False,")],
-    "config_remote_host_allowed": [(CFG, "                parse_loopback_base_url(value)", "                pass")],
     "config_dot_segments_allowed": [(CFG, 'if any(part in {".", ".."} for part in value.split("/")):', "if False:")],
     "config_path_not_checked_whole": [(CFG, "_PATH_RE.fullmatch(value)", "_PATH_RE.match(value)")],
     "config_identifier_pattern_weakened": [(CFG, 'IDENT_PATTERN: Final = r"^[A-Za-z0-9_-][A-Za-z0-9._~-]{0,127}$"', 'IDENT_PATTERN: Final = r"^.{1,128}$"')],
@@ -127,8 +127,6 @@ M: dict[str, list[tuple[str, str, str]]] = {
     "live_path_not_checked_whole": [(LIV, "bool(_PATH.fullmatch(path))", "bool(_PATH.match(path))")],
     "live_peer_not_verified": [(LIV, "            verify_peer(response, self._ip)", "            pass")],
     "live_peer_address_not_compared": [(LIV, "if ipaddress.ip_address(peer) != ipaddress.ip_address(expected_ip):", "if False:")],
-    "live_mixed_resolution_accepted": [(LIV, "not all(is_loopback_ip(a) for a in addresses)", "not any(is_loopback_ip(a) for a in addresses)")],
-    "live_name_not_checked_at_all": [(LIV, "        if not addresses or not all(is_loopback_ip(a) for a in addresses):", "        if False:")],
     # the raw-size check and the decoded-size check guard overlapping cases: remove both
     "live_body_cap_removed": [(LIV, "        if raw_total > cap:\n            raise _TooLarge", "        if False:\n            raise _TooLarge"), (LIV, "        if len(out) > cap:\n            raise _TooLarge", "        if False:\n            raise _TooLarge")],
     "live_total_timeout_removed": [(LIV, "async with asyncio.timeout(self._timeout):", "async with asyncio.timeout(None):")],
@@ -193,6 +191,54 @@ M: dict[str, list[tuple[str, str, str]]] = {
     "cli_plan_echoes_the_body": [(CLI, "            body = f\" [JSON body, {len(json.dumps(c.action.body, separators=(',', ':')))} bytes]\"", "            body = f\" {c.action.body}\"")],
     "cli_hides_the_notes": [(CLI, '        if "--reads-only" in note or "not exercised" in note:', "        if False:")],
     "report_drops_the_state_changes": [(REP, '        "state_changes": [dict(change) for change in c.state_changes],\n', "")],
+    # ---- remote live mode (docs/remote-live-design.md) -------------------------------------------
+    "config_remote_needs_no_allowed_hosts": [(CFG, "        if len(self.allowed_hosts) != 1:", "        if False:")],
+    "config_allowed_host_may_differ_from_the_url": [(CFG, "        if (declared_host, declared_port) != (host, port):", "        if False:")],
+    "config_allowed_host_accepts_wildcards_and_capitals": [(CFG, "(?P<host>[a-z0-9](?:", "(?P<host>[A-Za-z0-9*](?:")],
+    "config_ip_literal_host_not_judged": [(CFG, "                check_address(host, self.allowed_networks)", "                pass")],
+    "config_remote_rate_not_capped": [(CFG, '        if "rate_limit_rps" in self.model_fields_set and self.rate_limit_rps > REMOTE_MAX_RPS:', "        if False:")],
+    "config_remote_default_rate_not_lowered": [(CFG, '        if self.is_remote and "rate_limit_rps" not in self.model_fields_set:\n            return REMOTE_DEFAULT_RPS', '        if False:\n            return REMOTE_DEFAULT_RPS')],
+    "config_remote_needs_no_authorization": [(CFG, "        if self.target.is_remote and self.authorization is None:", "        if False:")],
+    "config_window_may_be_reversed": [(CFG, "            if self.not_before >= self.not_after:", "            if False:")],
+    "config_window_may_be_endless": [(CFG, "            if self.not_after - self.not_before > timedelta(days=MAX_WINDOW_DAYS):", "            if False:")],
+    "config_naive_timestamps_accepted": [(CFG, "        if value is not None and value.tzinfo is None:", "        if False:")],
+    "config_engagement_may_hold_control_characters": [(CFG, '    if any(unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} for ch in value):', "    if False:")],
+    "net_never_ranges_not_enforced": [(NET, '    if why is not None:\n        raise AddressRefused(f"{address} is never allowed: {why}")\n', "")],
+    "net_public_addresses_need_listing": [(NET, "    if address.is_global:\n        return\n", "    if False:\n        return\n")],
+    "net_any_private_address_accepted": [(NET, "        if address.version == net.version and address in net:", "        if True:")],
+    "net_zone_ids_accepted": [(NET, '    if "%" in text:\n        raise AddressRefused("an IP address with a zone id is never accepted")\n', "")],
+    "net_ipv6_loopback_never_allowed": [(NET, "    if address == _IPV6_LOOPBACK:\n        return None  # ::1 sits inside ::/96 but is ordinary loopback: it needs listing like 127.0.0.1\n", "")],
+    "net_listed_range_may_include_never_ranges": [(NET, "            if net.version == never.version and net.overlaps(never):", "            if False:")],
+    "net_listed_ranges_not_capped": [(NET, "    if len(networks) > MAX_NETWORKS:", "    if False:")],
+    "net_listed_range_needs_no_prefix": [(NET, '        if "/" not in text or "%" in text:', '        if "%" in text:')],
+    "net_listed_range_may_have_host_bits": [(NET, "ipaddress.ip_network(text, strict=True)", "ipaddress.ip_network(text, strict=False)")],
+    "net_remote_may_be_http": [(NET, '    if parts.scheme != "https":\n        raise NotLoopback(f"base_url must use https:// for any host that is not loopback; {V0_2_HINT}")\n', "")],
+    "net_loopback_may_be_https": [(NET, '        if parts.scheme != "http":\n            raise NotLoopback("a loopback base_url must use http://")\n', "")],
+    "net_user_info_accepted": [(NET, "    if parts.username is not None or parts.password is not None:", "    if False:")],
+    "net_path_query_fragment_accepted": [(NET, '    if parts.query or parts.fragment or parts.path not in ("", "/"):', "    if False:")],
+    "live_peer_policy_not_applied": [(LIV, '        (policy or EgressPolicy.loopback("", 0)).check(peer)', "        pass")],
+    "live_tls_not_verified": [(LIV, "    context = ssl.create_default_context()\n", "    context = ssl.create_default_context()\n    context.check_hostname = False\n    context.verify_mode = ssl.CERT_NONE\n")],
+    "live_tls_host_name_not_checked": [(LIV, "    context = ssl.create_default_context()\n", "    context = ssl.create_default_context()\n    context.check_hostname = False\n")],
+    "live_ca_bundle_ignored": [(LIV, "            context.load_verify_locations(cafile=str(ca_bundle))", "            pass")],
+    "live_sni_not_the_declared_name": [(LIV, '            extensions["sni_hostname"] = self._host  # the certificate is checked against THIS name', "            pass")],
+    "live_address_literal_not_judged": [(LIV, "                policy.check(host)\n", "                pass\n")],
+    "live_remote_answers_not_judged": [(LIV, "                policy.check(address)\n", "                pass\n")],
+    "live_only_the_first_answer_judged": [(LIV, "        for address in addresses:\n", "        for address in addresses[:1]:\n")],
+    "live_empty_answer_accepted": [(LIV, '        if not addresses:\n            raise EgressViolation("the host name did not resolve to any address")\n', "")],
+    "live_default_port_kept_in_host_header": [(LIV, "        self._host_header = shown if (egress.is_remote and port == 443) else f\"{shown}:{port}\"", "        self._host_header = f\"{shown}:{port}\"")],
+    "live_from_config_drops_the_listed_networks": [(LIV, "host=host, port=port, allowed_networks=target.allowed_networks,", "host=host, port=port, allowed_networks=(),")],
+    "live_from_config_ignores_the_remote_rate": [(LIV, "rate_limit_rps=target.effective_rate_limit_rps,", "rate_limit_rps=target.rate_limit_rps,")],
+    "auth_window_start_ignored": [(AUZ, "    if authorization.not_before is not None and now < authorization.not_before:", "    if False:")],
+    "auth_window_end_ignored": [(AUZ, "    if now > authorization.not_after:", "    if False:")],
+    "auth_window_length_ignored": [(AUZ, "    if authorization.not_after - now > timedelta(days=MAX_WINDOW_DAYS):", "    if False:")],
+    "auth_report_does_not_say_it_cannot_verify": [(AUZ, '        "The tool does not and cannot verify it. "\n', "")],
+    "cli_ack_not_required": [(CLI, "    if not acknowledged:", "    if False:")],
+    "cli_window_not_checked": [(CLI, "        authorization.check_window(cfg.scope.authorization, datetime.now(UTC))\n    except authorization.AuthorizationError as exc:\n        _fail(str(exc))", "        pass\n    except authorization.AuthorizationError as exc:\n        _fail(str(exc))")],
+    "cli_remote_run_without_attestation": [(CLI, "return await run(cfg, transport, reads_only=reads_only, attestation=note)", "return await run(cfg, transport, reads_only=reads_only)")],
+    "cli_preflight_ignores_refused_addresses": [(CLI, "    if refused:\n        _fail(", "    if False:\n        _fail(")],
+    "cli_init_remote_writes_the_plain_starter": [(CLI, "handle.write(REMOTE_CONFIG if remote else STARTER_CONFIG)", "handle.write(STARTER_CONFIG)")],
+    "template_remote_placeholder_is_a_live_window": [(TPL, "not_after: 1970-01-01T00:00:00Z", "not_after: 2099-01-01T00:00:00Z")],
+    "engine_ignores_an_explicit_attestation": [(ENG, "        attestation=attestation\n        or (ATTESTATION_FIXTURE if transport.name.startswith(\"fixture\") else ATTESTATION_LIVE),", "        attestation=(ATTESTATION_FIXTURE if transport.name.startswith(\"fixture\") else ATTESTATION_LIVE),")],
 }  # fmt: skip
 
 IGNORE = shutil.ignore_patterns(
