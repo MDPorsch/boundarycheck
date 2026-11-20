@@ -123,8 +123,45 @@ redacted_evidence_refs, limitations, review_state`, a summary and run-level limi
 rendering of the same data. Every report states that `no_issue_observed` does not mean "secure", that
 the policy is the assessor's, and that v0.1 sends no writes. SARIF is not produced.
 
-## 9. Not in v0.1
+## 9. Write checks and the state diff (fixture transport only)
 
-Writes of any kind, remote hosts, credential attacks, route or host discovery, any model or external
-API call, SARIF, PyPI publication, OS-keychain credentials, OpenAPI import, and write-path checks (the
-lab's flaws that need a write to show are **not detected**; see `LIMITATIONS.md`).
+A config may declare **write actions** (`POST`, `PUT`, `PATCH`, `DELETE`) with an optional static JSON
+`body`. The rules, all pinned by tests (`tests/unit/test_writes.py`, `tests/unit/test_statediff.py`,
+`tests/integration/test_lab_writes.py`):
+
+1. **Only the fixture transport ever sends a write.** The live transport refuses every method except
+   `GET` and `HEAD` (`policy_denied`), exactly as before. A write is never sent to a remote host.
+2. **Write cases are planned only where the policy says the request must be refused** (any `deny_*`).
+   A combination the policy *allows* is never sent: it would change the target's state and test
+   functionality, not a boundary. The run states how many such combinations were not exercised.
+3. A transport is **state-aware** if it can take a snapshot and restore a pristine state. The fixture
+   transport reads the lab's database with raw SQL, **independently of the target's own code**. Before
+   each write case the state is pristine; after it the engine snapshots and diffs. Tables named
+   `audit_events` and `alembic_version` are excluded: a correct refusal appends an audit row.
+4. Outcome of a write case that the policy says must be refused:
+
+   | Observed | State | Result |
+   |---|---|---|
+   | the expected denial | unchanged | `no_issue_observed` |
+   | any response that is **not a 2xx** (a refusal, an error, an unmapped status) | **changed** | `finding_candidate`, rule `BC-MUTATION-01`, severity high, confidence high: the target refused (or failed) and still persisted the write, whatever the declared policy says |
+   | a 2xx | any | `finding_candidate` with the rule of the declared reason (`BC-ROLE-01`, `BC-TENANT-01`, ...); a changed state is added to the detail |
+   | a different denial | unchanged | `finding_candidate` as for reads (an existence oracle, a wrong code) |
+   | an unmapped status | unchanged | `inconclusive` |
+   | snapshot taken before or after failed | n/a | `error`; never `no_issue_observed` |
+
+5. After any case whose diff is not empty the engine **restores the pristine state**, so one flaw
+   cannot colour the answers to later cases. A restore failure aborts the remaining write cases
+   (`error` for the case, `not_run` for the rest).
+6. A transport that is **not** state-aware gets `not_run` for every write case ("write checks need a
+   state snapshot; use the fixture transport"), so the run exits `2`. `--reads-only` omits write
+   cases instead, says so in the run limitations, and does not count them.
+7. The diff names the **table, the primary key and the kind** (added, removed, modified). It never
+   carries a value. Primary keys of the lab are synthetic ids; an adapter for a real system must not
+   put anything sensitive in a key.
+8. Concealment comparisons (s4) are derived from read cases only.
+
+## 10. Not in v0.1
+
+Writes to anything but the in-process fixture, remote hosts, credential attacks, route or host discovery,
+any model or external API call, SARIF, OS-keychain credentials, and OpenAPI import. Write checks on a live
+target are not offered because they need a state snapshot the tool cannot take from outside.

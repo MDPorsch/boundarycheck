@@ -29,9 +29,13 @@ def test_both_examples_validate_and_plan() -> None:
 
 def test_the_vulnerable_example_is_the_patched_one_minus_the_routes_the_vulnerable_lab_lacks() -> None:
     patched, vulnerable = _load(EXAMPLE), _load(VULN_EXAMPLE)
-    patched["actions"] = [a for a in patched["actions"] if a["id"] not in {"audit.read", "invoice.read.nested"}]
-    patched["policy"]["capabilities"].pop("audit.read")
-    patched["policy"]["fields"].pop("audit.list_item")
+    lacking = {"audit.read", "invoice.read.nested", "project.create", "member.role.write"}
+    patched["actions"] = [a for a in patched["actions"] if a["id"] not in lacking]
+    for gone in ("audit.read", "project.create", "member.role.write"):
+        patched["policy"]["capabilities"].pop(gone)
+    for gone in ("audit.list_item", "membership.detail"):
+        patched["policy"]["fields"].pop(gone)
+    patched["resources"] = [r for r in patched["resources"] if r["kind"] != "membership"]
     for doc, variant in ((patched, "vulnerable"), (vulnerable, "vulnerable")):
         doc["scope"]["id"] = "x"
         doc["scope"]["target"]["label"] = "x"
@@ -46,5 +50,6 @@ def test_the_documented_example_commands_are_the_real_ones() -> None:
         "ROLE_CHECK_MISSING",
         "PRIVATE_PROPERTY_SERIALIZED",
         "MARKET_BOUNDARY_OMITTED",
+        "WRITE_BEFORE_AUTHORIZATION",
     ):
         assert flaw in header

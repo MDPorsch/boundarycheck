@@ -160,17 +160,10 @@ def test_identifiers_are_validated_against_a_strict_alphabet(bad: str) -> None:
     _bad(dump(data))
 
 
-@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "get", "TRACE"])
-def test_only_get_and_head_are_accepted_in_v0_1(method: str) -> None:
-    data = mini()
-    data["actions"][0]["method"] = method
-    _bad(dump(data))
-
-
-def test_the_refusal_of_writes_says_why() -> None:
-    data = mini()
-    data["actions"][0]["method"] = "POST"
-    _bad(dump(data), "GET")
+# The v0.1 pins "only GET and HEAD are accepted" and "POST is refused" were superseded by
+# docs/contract.md s9 (write actions are accepted and run on the fixture transport only). Their
+# replacements, and the tests that no live transport ever sends a write, are in tests/unit/test_writes.py
+# and tests/negative/test_live_transport.py.
 
 
 @pytest.mark.parametrize(

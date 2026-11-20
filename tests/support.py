@@ -271,6 +271,7 @@ class FakeTransport:
         self.creds = creds
         self._secrets = secrets or []
         self.sent: list[tuple[str, str, str | None]] = []
+        self.bodies: list[bytes | None] = []
         self.closed = False
 
     def has_credential(self, principal: str | None) -> bool:
@@ -279,8 +280,9 @@ class FakeTransport:
     def secrets(self) -> list[str]:
         return list(self._secrets)
 
-    async def send(self, method: str, path: str, principal: str | None) -> Any:
+    async def send(self, method: str, path: str, principal: str | None, body: bytes | None = None) -> Any:
         self.sent.append((method, path, principal))
+        self.bodies.append(body)
         result = self.responder(method, path, principal)
         if isinstance(result, Exception):
             raise result
@@ -290,6 +292,69 @@ class FakeTransport:
         self.closed = True
 
 
+class StatefulFake(FakeTransport):
+    """A state-aware fake: it holds a tiny two-table "database". `mutates(method, path, principal)`
+    says which requests change it; the engine must notice through `snapshot()` alone."""
+
+    state_aware = True
+
+    def __init__(
+        self,
+        responder: Callable[[str, str, str | None], Any],
+        mutates: Callable[[str, str, str | None], bool] = lambda *_a: False,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(responder, **kwargs)
+        self._pristine: dict[str, tuple[tuple[Any, ...], ...]] = {
+            "projects": (("p-1", "title one", 1), ("p-2", "title two", 1)),
+            "memberships": (("m-1", "viewer"),),
+        }
+        self.tables = dict(self._pristine)
+        self._mutates = mutates
+        self.snapshots = 0
+        self.resets = 0
+        self.fail_snapshot_on: int | None = None  # the n-th snapshot call raises
+        self.fail_reset = False
+
+    async def send(self, method: str, path: str, principal: str | None, body: bytes | None = None) -> Any:
+        result = await super().send(method, path, principal, body)
+        if self._mutates(method, path, principal):
+            self.tables = {**self.tables, "projects": (("p-1", "CHANGED SECRET TITLE", 2), self.tables["projects"][1])}
+        return result
+
+    async def snapshot(self) -> dict[str, tuple[tuple[Any, ...], ...]]:
+        self.snapshots += 1
+        if self.fail_snapshot_on == self.snapshots:
+            raise RuntimeError("snapshot failed")
+        return dict(self.tables)
+
+    async def reset_state(self) -> None:
+        self.resets += 1
+        if self.fail_reset:
+            raise RuntimeError("reset failed")
+        self.tables = dict(self._pristine)
+
+
+def write_config() -> dict[str, Any]:
+    """`mini()` plus two write actions. The policy says editors, admins and owners may write."""
+    data = mini()
+    data["actions"] += [
+        {
+            "id": "project.write", "method": "PATCH", "path": "/v1/projects/{project_id}",
+            "resource_kind": "project", "surface": "project.detail",
+            "body": {"title": "boundarycheck probe", "row_version": 1},
+        },
+        {
+            "id": "project.create", "method": "POST", "path": "/v1/tenants/{tenant_id}/projects",
+            "resource_kind": "tenant", "surface": "project.detail",
+            "body": {"title": "boundarycheck probe", "market": "UK"},
+        },
+    ]  # fmt: skip
+    data["policy"]["capabilities"]["project.write"] = ["editor", "admin", "owner"]
+    data["policy"]["capabilities"]["project.create"] = ["editor", "admin", "owner"]
+    return data
+
+
 def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) -> Callable[[str, str, str | None], Any]:
     """A target that behaves exactly as the declared policy says (built with the product's own
     oracle: fine for testing the engine's plumbing, never for judging a target). `tweak(case,
@@ -297,7 +362,7 @@ def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) ->
     from boundarycheck.model import Observation, Outcome  # noqa: PLC0415
     from boundarycheck.planner import plan  # noqa: PLC0415
 
-    by_request = {(c.principal, c.path): c for c in plan(config)}
+    by_request = {(c.principal, c.action.method, c.path): c for c in plan(config)}
     status = {
         Outcome.ALLOW: 200,
         Outcome.DENY_UNAUTHENTICATED: 401,
@@ -307,7 +372,7 @@ def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) ->
     counter = {"n": 0}
 
     def respond(method: str, path: str, principal: str | None) -> Any:
-        case = by_request[(principal, path)]
+        case = by_request[(principal, method, path)]
         counter["n"] += 1
         exp = case.expected
         headers = {"content-type": "application/json", "x-request-id": f"req-{counter['n']}"}

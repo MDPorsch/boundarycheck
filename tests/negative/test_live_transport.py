@@ -462,3 +462,17 @@ def test_from_config_reads_each_credential_from_the_named_variable_only() -> Non
         and not transport.has_credential("carol")
     )
     assert transport.secrets() == [TOKEN]
+
+
+# ------------------------------------------------- M4: the live transport never writes ----
+async def test_the_live_transport_is_not_state_aware_and_refuses_a_body_even_on_a_read() -> None:
+    from boundarycheck.model import PolicyRefusal  # noqa: PLC0415
+
+    with fake_server() as server:
+        transport = _make(server.base_url)
+        assert getattr(transport, "state_aware", False) is False
+        for method in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
+            with pytest.raises(PolicyRefusal):
+                await transport.send(method, "/v1/x", None, b'{"a":1}')
+        assert server.requests == [], "nothing may have reached the server"
+        await transport.aclose()

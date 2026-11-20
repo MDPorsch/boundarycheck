@@ -301,3 +301,51 @@ def test_an_internal_failure_exits_two_never_one(monkeypatch: pytest.MonkeyPatch
     out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(tmp_path / "r"))
     assert out.exit_code == 2 and "internal error" in out.output and "RuntimeError" in out.output
     assert "Traceback" not in out.output and not (tmp_path / "r").exists()
+
+
+# ---------------------------------------------------------------- M4: writes in the CLI ----
+def test_plan_lists_the_write_requests_and_marks_that_they_carry_a_body() -> None:
+    out = _invoke("plan", "--config", str(EXAMPLE))
+    lines = [ln for ln in out.output.splitlines() if ln.startswith("BC-")]
+    patch = [ln for ln in lines if " PATCH /v1/projects/" in ln]
+    assert patch and all("body" in ln.lower() for ln in patch)
+    assert "boundarycheck probe" not in out.output  # the body is not echoed, only its presence and size
+
+
+def test_a_fixture_run_with_writes_exits_zero_on_the_patched_lab(tmp_path: Path) -> None:
+    out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(tmp_path / "r"))
+    assert out.exit_code == 0, out.output
+    assert "not exercised" in out.output.lower() or "not exercised" in (next((tmp_path / "r").iterdir()) / "report.md").read_text().lower()
+
+
+def test_the_fifth_flaw_is_detected_by_the_cli_and_names_the_mutation_rule(tmp_path: Path) -> None:
+    out = _invoke(
+        "test", "--config", str(VULN_EXAMPLE), "--transport", "fixture",
+        "--fixture-flaws", "WRITE_BEFORE_AUTHORIZATION", "--runs-dir", str(tmp_path / "r"),
+    )  # fmt: skip
+    assert out.exit_code == 1 and "BC-MUTATION-01" in out.output and "bob:project.write:PA1" in out.output
+
+
+def test_reads_only_runs_clean_against_the_fifth_flaw_and_says_it_skipped_the_writes(tmp_path: Path) -> None:
+    out = _invoke(
+        "test", "--config", str(VULN_EXAMPLE), "--transport", "fixture",
+        "--fixture-flaws", "WRITE_BEFORE_AUTHORIZATION", "--reads-only", "--runs-dir", str(tmp_path / "r"),
+    )  # fmt: skip
+    assert out.exit_code == 0 and "reads-only" in out.output.lower()
+
+
+def test_live_with_write_actions_never_sends_a_write_and_cannot_be_clean(tmp_path: Path) -> None:
+    """A live target cannot report its state, so its declared write checks are `not_run`."""
+    import json  # noqa: PLC0415
+
+    with fake_server() as server:
+        config = tmp_path / "live.yaml"
+        config.write_text(EXAMPLE.read_text().replace("http://127.0.0.1:8099", server.base_url))
+        env = {"BC_TOKEN_ALICE": fake_token()}
+        out = _invoke("test", "--config", str(config), "--transport", "live", "--runs-dir", str(tmp_path / "r"), env=env)
+        assert out.exit_code != 0, out.output[-400:]
+        assert not any(r["method"] != "GET" for r in server.requests), "a write reached a live target"
+    report = json.loads((next((tmp_path / "r").iterdir()) / "report.json").read_text())
+    writes = [c for c in report["cases"] if c["action"] in {"project.write", "project.create", "member.role.write"}]
+    assert writes and {c["status"] for c in writes} == {"not_run"}
+    assert all("state snapshot" in c["detail"] for c in writes)
