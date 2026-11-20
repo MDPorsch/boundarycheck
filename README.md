@@ -10,7 +10,7 @@ replays read-only requests as each test user and compares what the API actually 
 policy says it should do. Every result is one of seven honest states, and a failed or partial run can
 never look clean.
 
-> **Status: v0.2.0, alpha.** Live targets are read-only (`GET`/`HEAD`): your own machine, or **one declared
+> **Status: v0.3.0, alpha.** Live targets are read-only (`GET`/`HEAD`): your own machine, or **one declared
 > remote host** over verified HTTPS (see below). Write checks exist only against the built-in in-process lab. Use it
 > only against systems you own or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md)
 > and [LIMITATIONS.md](LIMITATIONS.md).
@@ -30,7 +30,7 @@ never look clean.
 
 ```bash
 pipx install boundarycheck          # or: uv tool install boundarycheck
-boundarycheck --version             # 0.2.0
+boundarycheck --version             # 0.3.0
 ```
 
 Published on PyPI as [`boundarycheck`](https://pypi.org/project/boundarycheck/) through a protected
@@ -53,7 +53,7 @@ uv run boundarycheck test --config examples/lab.yaml --transport fixture
 Real output on the patched lab (419 cases: 240 reads, 81 refused writes, 98 concealment comparisons):
 
 ```text
-boundarycheck 0.2.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
+boundarycheck 0.3.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
 cases: no_issue_observed: 419, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 419)
   note: 7 write combination(s) that the policy allows were not exercised by design: write checks send only requests the policy says must be refused.
 exit code 0. Note: no_issue_observed does not mean the target is secure.
