@@ -316,6 +316,38 @@ def test_a_cyclic_ref_terminates() -> None:
     assert any("children" in key for fs in fields.values() for key in fs)
 
 
+def test_a_cyclic_schema_lists_each_field_once_and_never_repeats_itself() -> None:
+    # Termination alone proves little: the config's 120-character field-path limit would also end a cycle,
+    # after listing `children.children.children...`. The walk itself must refuse to re-enter a schema.
+    document = spec()
+    document["components"]["schemas"]["Node"] = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "children": {"type": "array", "items": {"$ref": "#/components/schemas/Node"}},
+            "parent": {"$ref": "#/components/schemas/Node"},
+        },
+    }
+    document["paths"]["/v1/me"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/Node"
+    }
+    fields = _doc(_import(document))["policy"]["fields"]["whoAmI"]
+    assert sorted(fields) == ["children", "id", "parent"]
+
+
+def test_field_paths_stop_at_a_fixed_depth_even_without_a_cycle() -> None:
+    from boundarycheck.openapi import MAX_FIELD_DEPTH  # noqa: PLC0415
+
+    schema: dict[str, Any] = {"type": "string"}
+    for level in range(MAX_FIELD_DEPTH + 5, 0, -1):  # nine levels, deeper than the limit
+        schema = {"type": "object", "properties": {f"l{level}": schema}}
+    document = spec()
+    document["paths"]["/v1/me"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] = schema
+    fields = _doc(_import(document))["policy"]["fields"]["whoAmI"]
+    expected = [".".join(f"l{i}" for i in range(1, depth + 1)) for depth in range(1, MAX_FIELD_DEPTH + 2)]
+    assert sorted(fields) == sorted(expected)
+
+
 def test_a_ref_that_points_nowhere_is_a_note_not_a_crash() -> None:
     document = spec()
     document["paths"]["/v1/me"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {
@@ -400,6 +432,17 @@ def test_a_path_the_config_could_not_hold_is_skipped_with_a_note_never_passed_th
     document["paths"][path] = {"get": {"operationId": "odd", "responses": {"200": {}}}}
     result = _import(document)
     assert "odd" not in _actions(result) and any("skipped" in n.lower() for n in result.notes)
+
+
+@pytest.mark.parametrize("path", ["/v1/users:search", "/v1/x y", "/v1/a%20b", "/v1/{id}.json", "/v1/pre{id}"])
+def test_a_path_segment_outside_the_alphabet_is_refused_for_that_reason(path: str) -> None:
+    # The config's own path check would also reject these, with a vaguer message; the importer's check
+    # is the one that tells the person which characters are the problem.
+    document = spec()
+    document["paths"][path] = {"get": {"operationId": "odd", "responses": {"200": {}}}}
+    result = _import(document)
+    assert "odd" not in _actions(result)
+    assert any("characters the config does not allow" in n for n in result.notes)
 
 
 def test_names_that_do_not_fit_the_alphabets_are_skipped_so_nothing_can_inject_yaml() -> None:
