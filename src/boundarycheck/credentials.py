@@ -56,15 +56,33 @@ class Material:
         return "Authorization", f"Bearer {self.value}"
 
 
-def resolve_materials(config: Config, environ: Mapping[str, str]) -> dict[str, Material]:
+def resolve_materials(
+    config: Config, environ: Mapping[str, str], *, notes: list[str] | None = None
+) -> dict[str, Material]:
     """Materials for every principal whose credential names a source that holds a usable value. A principal
-    with no value, or an unusable one, is left out, so its cases are `not_run` and never sent."""
+    with no value, or an unusable one, is left out, so its cases are `not_run` and never sent. `notes`
+    collects a human reason for each keychain problem (never a value)."""
+    from boundarycheck import keychain  # noqa: PLC0415
+
     found: dict[str, Material] = {}
     for key, principal in config.principals.items():
         cred = principal.credential
-        if cred is None or cred.env is None:
+        if cred is None:
             continue
-        value = environ.get(cred.env)
+        value: str | None = None
+        if cred.env is not None:
+            value = environ.get(cred.env)
+        elif cred.keychain is not None:
+            try:
+                value = keychain.get(cred.keychain.service, cred.keychain.username)
+            except keychain.KeychainError as exc:
+                if notes is not None:
+                    notes.append(f"principal '{key}': {exc}")
+                continue
+            if value is None and notes is not None:
+                notes.append(
+                    f"principal '{key}': no keychain entry for service '{cred.keychain.service}' and that username"
+                )
         if value is None:
             continue
         material = Material(value=value, scheme=cred.scheme, name=cred.name, prefix=cred.prefix or "")

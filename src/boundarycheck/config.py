@@ -132,12 +132,24 @@ class _Model(BaseModel):
     )
 
 
+KEYCHAIN_NAME: Final = r"^[A-Za-z0-9._@+-]{1,128}$"
+KeychainName = Annotated[str, StringConstraints(pattern=KEYCHAIN_NAME)]
+
+
+class Keychain(_Model):
+    """A secret held in the operating system's keychain (docs/design-v0.3.md s3), named here, never stored."""
+
+    service: KeychainName = "boundarycheck"
+    username: KeychainName
+
+
 class Credential(_Model):
     """A principal's credential is NAMED here, never stored: an environment variable (live) and/or a
     fixture key (the in-process lab adapter mints its own tokens)."""
 
     env: EnvName | None = None
     fixture: Ident | None = None
+    keychain: Keychain | None = None
     # How the value is sent (docs/design-v0.3.md s2): a bearer token (default), an API key in a named
     # header, or a named session cookie. `in` is a Python keyword, hence the alias.
     scheme: Scheme = Field(default="bearer", alias="in")
@@ -145,17 +157,19 @@ class Credential(_Model):
     prefix: str | None = None
 
     @model_validator(mode="after")
-    def _names_something(self) -> Credential:
-        if self.env is None and self.fixture is None:
-            raise ValueError("a credential must name an environment variable (env) and/or a fixture key (fixture)")
+    def _names_something(self) -> Credential:  # noqa: PLR0912 - one flat list of independent rules
+        if self.env is None and self.fixture is None and self.keychain is None:
+            raise ValueError("a credential must name an environment variable (env), a keychain entry or a fixture key")
+        if self.env is not None and self.keychain is not None:
+            raise ValueError("a credential names an env variable or a keychain entry, not both")
         if self.scheme == "bearer":
             if self.name is not None or self.prefix is not None:
                 raise ValueError(
                     "a bearer credential takes no name or prefix (they belong to in: header or in: cookie)"
                 )
             return self
-        if self.env is None:
-            raise ValueError("in: header and in: cookie need an env variable that holds the value")
+        if self.env is None and self.keychain is None:
+            raise ValueError("in: header and in: cookie need an env variable or a keychain entry that holds the value")
         if self.name is None:
             raise ValueError(f"in: {self.scheme} needs a name (the header or cookie name)")
         if self.scheme == "header":

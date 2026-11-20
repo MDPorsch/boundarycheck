@@ -148,6 +148,7 @@ class LiveTransport:
             if (scheme, host, port) != (egress.scheme, egress.host, egress.port):
                 raise EgressViolation("the base_url is not the host the egress policy was built for")
         self._policy = egress
+        self.notes: list[str] = []  # why a credential could not be used (never a value)
         self._host = host
         self._port = port
         self.name = "live:remote" if egress.is_remote else "live:loopback"
@@ -230,7 +231,8 @@ class LiveTransport:
         target = config.scope.target
         if target.base_url is None:
             raise TransportUnavailable("the config has no scope.target.base_url, which the live transport needs")
-        materials = resolve_materials(config, environ)
+        notes: list[str] = []
+        materials = resolve_materials(config, environ, notes=notes)
         egress: EgressPolicy | None = None
         if target.is_remote:
             _scheme, host, port, _remote = parse_target_url(target.base_url)
@@ -238,12 +240,14 @@ class LiveTransport:
                 host=host, port=port, allowed_networks=target.allowed_networks,
                 ca_bundle=Path(target.ca_bundle) if target.ca_bundle else None,
             )  # fmt: skip
-        return cls(
+        transport = cls(
             target.base_url, credentials={}, environ=environ, materials=materials,
             rate_limit_rps=target.effective_rate_limit_rps,
             timeout=target.timeout_seconds, max_response_bytes=target.max_response_bytes, resolver=resolver,
             egress=egress,
         )  # fmt: skip
+        transport.notes = notes
+        return transport
 
     def has_credential(self, principal: str | None) -> bool:
         return principal is None or principal in self._materials

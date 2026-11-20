@@ -40,7 +40,10 @@ class MemoryKeyring(KeyringBackend):
 
 
 class PlaintextFileKeyring(MemoryKeyring):
-    """Looks like a keyring.alt file backend: it must be refused."""
+    """Looks like a keyrings.alt file backend: it must be refused."""
+
+
+PlaintextFileKeyring.__module__ = "keyrings.alt.file"  # the module name decides, as in the real library
 
 
 @pytest.fixture
@@ -76,8 +79,17 @@ def test_a_keychain_credential_is_accepted_and_the_service_has_a_default() -> No
 
 
 def test_a_keychain_credential_may_choose_a_scheme_and_a_service() -> None:
-    cred = parse(_cfg({"keychain": {"service": "acme-tests", "username": "bob"}, "in": "header", "name": "X-API-Key"})).principals["alice"].credential
-    assert cred is not None and cred.scheme == "header" and cred.keychain is not None and cred.keychain.service == "acme-tests"
+    cred = (
+        parse(_cfg({"keychain": {"service": "acme-tests", "username": "bob"}, "in": "header", "name": "X-API-Key"}))
+        .principals["alice"]
+        .credential
+    )
+    assert (
+        cred is not None
+        and cred.scheme == "header"
+        and cred.keychain is not None
+        and cred.keychain.service == "acme-tests"
+    )
 
 
 def test_a_credential_names_an_env_variable_or_a_keychain_entry_never_both() -> None:
@@ -129,13 +141,17 @@ def test_the_accepted_modules_are_exactly_the_real_os_stores() -> None:
     }  # fmt: skip
 
 
-def test_a_chain_of_backends_uses_the_first_acceptable_one_and_never_a_weaker_fallback(monkeypatch: pytest.MonkeyPatch, memory: MemoryKeyring) -> None:
+def test_a_chain_of_backends_uses_the_first_acceptable_one_and_never_a_weaker_fallback(
+    monkeypatch: pytest.MonkeyPatch, memory: MemoryKeyring
+) -> None:
     from boundarycheck import keychain  # noqa: PLC0415
 
     class Chain:
-        backends = [PlaintextFileKeyring(), memory]
+        def __init__(self) -> None:
+            self.backends = [PlaintextFileKeyring(), memory]
 
-    monkeypatch.setattr(keyring, "get_keyring", lambda: Chain())
+    chain = Chain()
+    monkeypatch.setattr(keyring, "get_keyring", lambda: chain)
     assert keychain.backend() is memory
 
 
@@ -161,7 +177,9 @@ def test_only_a_usable_value_can_be_stored(memory: MemoryKeyring, value: str) ->
     assert value not in str(caught.value) and not memory.store
 
 
-def test_a_backend_failure_is_a_clear_error_that_does_not_echo_the_backend_message(monkeypatch: pytest.MonkeyPatch, memory: MemoryKeyring) -> None:
+def test_a_backend_failure_is_a_clear_error_that_does_not_echo_the_backend_message(
+    monkeypatch: pytest.MonkeyPatch, memory: MemoryKeyring
+) -> None:
     from boundarycheck import keychain  # noqa: PLC0415
 
     def locked(*_a: Any) -> None:
@@ -236,7 +254,10 @@ def test_keychain_set_prompts_twice_without_echo_and_never_prints_the_value(memo
 
 
 def test_keychain_set_refuses_a_mismatch_and_an_unusable_value(memory: MemoryKeyring) -> None:
-    assert _cli("keychain", "set", "--username", "a", input_="aaaaaaaaaa\nbbbbbbbbbb\n").exit_code == 2 and not memory.store
+    assert (
+        _cli("keychain", "set", "--username", "a", input_="aaaaaaaaaa\nbbbbbbbbbb\n").exit_code == 2
+        and not memory.store
+    )
     out = _cli("keychain", "set", "--username", "a", input_="short\nshort\n")
     assert out.exit_code == 2 and not memory.store and "short" not in out.output.replace("shortest", "")
 
@@ -264,14 +285,20 @@ def test_keychain_commands_refuse_a_plaintext_backend() -> None:
         keyring.set_keyring(previous)
 
 
-def test_a_live_run_uses_a_keychain_credential_and_leaves_the_value_nowhere(memory: MemoryKeyring, tmp_path: Any) -> None:
+def test_a_live_run_uses_a_keychain_credential_and_leaves_the_value_nowhere(
+    memory: MemoryKeyring, tmp_path: Any
+) -> None:
     secret = fake_token("kcrun")
     memory.store[("boundarycheck", "alice")] = secret
     data = mini()
-    data["principals"] = {"alice": {"credential": {"keychain": {"username": "alice"}, "in": "header", "name": "X-API-Key"}}}
+    data["principals"] = {
+        "alice": {"credential": {"keychain": {"username": "alice"}, "in": "header", "name": "X-API-Key"}}
+    }
     data["memberships"] = [{"principal": "alice", "tenant": "A", "role": "owner", "status": "active"}]
     with fake_server() as server:
-        server.default = lambda h: h._send(200, {"content-type": "application/json"}, ('{"echo":"' + h.headers.get("X-API-Key", "") + '"}').encode())
+        server.default = lambda h: h._send(
+            200, {"content-type": "application/json"}, ('{"echo":"' + h.headers.get("X-API-Key", "") + '"}').encode()
+        )
         data["scope"]["target"]["base_url"] = server.base_url
         path = tmp_path / "c.yaml"
         path.write_text(dump(data))
@@ -288,6 +315,7 @@ def test_a_missing_keychain_entry_is_reported_and_its_cases_are_not_run(memory: 
     data["principals"] = {"alice": {"credential": {"keychain": {"username": "ghost"}}}}
     data["memberships"] = [{"principal": "alice", "tenant": "A", "role": "owner", "status": "active"}]
     with fake_server() as server:
+        server.default = lambda h: h._send(401, {"content-type": "application/json"}, b'{"code":"auth.token_invalid"}')
         data["scope"]["target"]["base_url"] = server.base_url
         path = tmp_path / "c.yaml"
         path.write_text(dump(data))
