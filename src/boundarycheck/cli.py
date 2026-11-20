@@ -23,6 +23,7 @@ from boundarycheck.netcheck import AddressRefused, EgressPolicy, parse_target_ur
 from boundarycheck.planner import plan
 from boundarycheck.redact import SecretLeakError
 from boundarycheck.report import to_json, to_markdown
+from boundarycheck.sarif import action_lines, to_sarif
 from boundarycheck.template import REMOTE_CONFIG, STARTER_CONFIG
 
 DEFAULT_RUNS = Path(".boundarycheck/runs")
@@ -255,6 +256,13 @@ def check_cmd(
             help="Lab adapter only: comma-separated flaw names (vulnerable variant).",
         ),
     ] = None,
+    sarif_uri: Annotated[
+        str | None,
+        typer.Option(
+            "--sarif-uri",
+            help="The config file's path as it appears in your repository, for report.sarif (default: its file name).",
+        ),
+    ] = None,
     ack_authorization: Annotated[
         bool,
         typer.Option(
@@ -291,11 +299,26 @@ def check_cmd(
     saved: Path | None = None
     if not no_save:
         try:
-            saved = RunStore(runs_dir).save(result, to_json(result), to_markdown(result), [*used, *_env_secrets(cfg)])
+            saved = RunStore(runs_dir).save(
+                result,
+                to_json(result),
+                to_markdown(result),
+                [*used, *_env_secrets(cfg)],
+                sarif=_sarif_text(result, config, sarif_uri),
+            )
         except (StoreError, SecretLeakError) as exc:
             _fail(str(exc))
     _summarize(result, saved)
     raise typer.Exit(result.exit_code)
+
+
+def _sarif_text(result: RunResult, config: Path, sarif_uri: str | None) -> str:
+    """report.sarif: results point at the line of each action in the config file."""
+    try:
+        text = config.read_text(encoding="utf-8")[:262_144]
+    except OSError:
+        text = ""
+    return to_sarif(result, config_uri=sarif_uri if sarif_uri is not None else config.name, lines=action_lines(text))
 
 
 def _env_secrets(cfg: Any) -> list[str]:
@@ -311,7 +334,7 @@ def _env_secrets(cfg: Any) -> list[str]:
 @app.command()
 def report(
     run_id: Annotated[str, typer.Option("--run", help="Run id (see list-runs).")],
-    fmt: Annotated[str, typer.Option("--format", "-f", help="json or md.")] = "md",
+    fmt: Annotated[str, typer.Option("--format", "-f", help="json, md or sarif.")] = "md",
     runs_dir: Runs_ = DEFAULT_RUNS,
 ) -> None:
     """Print a stored report."""
