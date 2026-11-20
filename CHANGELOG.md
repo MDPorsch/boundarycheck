@@ -1,9 +1,11 @@
 # Changelog
 
-All notable changes are recorded here. The format follows Keep a Changelog; versions follow SemVer
-once a release is tagged. Nothing has been published to PyPI.
+All notable changes are recorded here. The format follows Keep a Changelog; versions follow SemVer.
 
-## [Unreleased] - 0.1.0.dev0
+## [0.1.0] - 2026-11-20
+
+First release. The owner confirmed the licence (Apache-2.0) and approved publishing to PyPI on
+2026-11-20; publication uses trusted publishing through a protected environment (`docs/releasing.md`).
 
 ### Added
 - Hardened YAML config loader (size cap, no tags/aliases/anchors/merge keys/duplicate keys, depth cap,

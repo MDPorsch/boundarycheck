@@ -10,7 +10,7 @@ replays read-only requests as each test user and compares what the API actually 
 policy says it should do. Every result is one of seven honest states, and a failed or partial run can
 never look clean.
 
-> **Status: v0.1, alpha.** Live targets are **loopback-only and read-only** (`GET`/`HEAD`): it tests the
+> **Status: v0.1.0, alpha.** Live targets are **loopback-only and read-only** (`GET`/`HEAD`): it tests the
 > API you run on your own machine. Write checks exist only against the built-in in-process lab. Use it
 > only against systems you own or are explicitly authorized to assess. See [SECURITY.md](SECURITY.md)
 > and [LIMITATIONS.md](LIMITATIONS.md).
@@ -25,6 +25,17 @@ never look clean.
 | Field exposure: does a response carry a field that role should not see? | Test timing channels, concurrency, rate limits or anything it was not told about |
 | List routes: does a list name objects the user may not see, or count them in `total`? | Reach a remote host (planned for v0.2: a scoped, HTTPS-only, allow-listed design) |
 | Refused writes (fixture only): does a request the policy says must be refused still **change a row**, whatever status it returns? | Send a write the policy allows: that would test functionality, and it would change state |
+
+## Install
+
+```bash
+pipx install boundarycheck          # once release 0.1.0 is on PyPI (see below)
+```
+
+PyPI publication goes through a protected release workflow that needs the owner's approval
+([docs/releasing.md](docs/releasing.md)); until <https://pypi.org/project/boundarycheck/> shows 0.1.0,
+install from source as in the next section. A wheel install validates configs, plans, and runs
+`--transport live` against loopback; the `fixture` transport and the examples need a source checkout.
 
 ## Try it in two minutes (no network, no credentials)
 
@@ -41,7 +52,7 @@ uv run boundarycheck test --config examples/lab.yaml --transport fixture
 Real output on the patched lab (419 cases: 240 reads, 81 refused writes, 98 concealment comparisons):
 
 ```text
-boundarycheck 0.1.0.dev0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
+boundarycheck 0.1.0 | scope lab-demo | transport fixture:tenant-boundary-lab:patched
 cases: no_issue_observed: 419, finding_candidate: 0, policy_denied: 0, not_run: 0, incomplete: 0, error: 0, inconclusive: 0 (total 419)
   note: 7 write combination(s) that the policy allows were not exercised by design: write checks send only requests the policy says must be refused.
 exit code 0. Note: no_issue_observed does not mean the target is secure.
