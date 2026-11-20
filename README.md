@@ -1,5 +1,9 @@
 # boundarycheck
 
+[![CI](https://github.com/MDPorsch/boundarycheck/actions/workflows/ci.yml/badge.svg)](https://github.com/MDPorsch/boundarycheck/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/MDPorsch/boundarycheck/actions/workflows/codeql.yml/badge.svg)](https://github.com/MDPorsch/boundarycheck/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Check that an API enforces the authorization boundaries **you declare**: tenant isolation, roles,
 hidden objects and field exposure. You write down who is allowed to see what (the *policy*); the tool
 replays read-only requests as each test user and compares what the API actually did with what your
