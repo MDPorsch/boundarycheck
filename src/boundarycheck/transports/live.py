@@ -150,7 +150,8 @@ class LiveTransport:
         self._host = host
         self._port = port
         self.name = "live:remote" if egress.is_remote else "live:loopback"
-        context = tls_context(egress.ca_bundle) if egress.is_remote else None
+        # always a real, verifying context (a loopback run is plain http and never uses it)
+        context = tls_context(egress.ca_bundle if egress.is_remote else None)
         self._ip = self._pin(egress, host, resolver or _system_resolver)
         if egress.is_remote:
             self.name = f"live:remote:{host}:{port}@{self._ip}"
@@ -170,7 +171,7 @@ class LiveTransport:
             follow_redirects=False,
             timeout=httpx.Timeout(timeout),
             limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-            verify=context if context is not None else True,  # remote: ALWAYS verified, see tls_context
+            verify=context,  # ALWAYS verified: see tls_context; there is no way to pass False
         )
 
     @staticmethod
