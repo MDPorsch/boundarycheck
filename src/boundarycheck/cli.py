@@ -20,6 +20,7 @@ from boundarycheck.engine import RunResult, run
 from boundarycheck.evidence import RunStore, StoreError, parse_age
 from boundarycheck.model import EgressViolation, Status, TransportUnavailable
 from boundarycheck.netcheck import AddressRefused, EgressPolicy, parse_target_url
+from boundarycheck.openapi import MAX_SPEC_BYTES, OpenApiError, import_openapi
 from boundarycheck.planner import plan
 from boundarycheck.redact import SecretLeakError
 from boundarycheck.report import to_json, to_markdown
@@ -82,6 +83,53 @@ def init(
     except OSError:
         _fail(f"could not write {output}")
     typer.echo(f"wrote {output}. Next: edit it, then 'boundarycheck validate --config {output}'.")
+
+
+@app.command(name="import-openapi")
+def import_openapi_cmd(
+    spec: Annotated[str, typer.Argument(help="An OpenAPI 3 document (JSON or YAML): a FILE path, never a URL.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Where to write the skeleton config.")] = Path(
+        "boundarycheck.yaml"
+    ),
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+) -> None:
+    """Write a SKELETON config from an OpenAPI document. It never writes your policy and never fetches anything."""
+    if spec.lower().startswith(("http://", "https://")):
+        _fail("give a file path: the importer reads one local file and never fetches a URL (download it yourself)")
+    path = Path(spec)
+    try:
+        if not path.is_file():
+            _fail("the OpenAPI path is not a readable file")
+        if path.stat().st_size > MAX_SPEC_BYTES:
+            _fail(f"the document is too large (limit {MAX_SPEC_BYTES // (1024 * 1024)} MiB)")
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_SPEC_BYTES + 1)
+    except OSError:
+        _fail("the OpenAPI file could not be read")
+    try:
+        result = import_openapi(raw)
+    except OpenApiError as exc:
+        _fail(str(exc))
+    try:
+        with output.open("w" if force else "x", encoding="utf-8") as handle:
+            handle.write(result.yaml_text)
+    except FileExistsError:
+        _fail(f"{output} already exists (use --force to overwrite it)")
+    except OSError:
+        _fail(f"could not write {output}")
+    typer.echo(
+        f"wrote {output}: {result.actions} action(s) from GET/HEAD operations; "
+        f"{result.skipped} write operation(s) not imported."
+    )
+    for note in result.notes[:10]:
+        typer.echo(f"  note: {note}")
+    if len(result.notes) > 10:
+        typer.echo(f"  ... and {len(result.notes) - 10} more notes inside the file")
+    typer.echo(
+        "This is a SKELETON. Edit it before running: the POLICY (who may see what) is yours to write, and every "
+        "capability and field is a placeholder that fails loudly until you do. Then: boundarycheck validate --config "
+        f"{output}"
+    )
 
 
 @app.command()

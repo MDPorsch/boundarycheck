@@ -182,7 +182,7 @@ def test_paths_use_snake_case_parameters_and_resources_carry_every_id_an_action_
 
 def test_every_kind_gets_two_real_looking_placeholders_and_one_that_does_not_exist() -> None:
     doc = _doc(_import(spec()))
-    for kind in {"tenant", "project", "invoice"}:
+    for kind in ("tenant", "project", "invoice"):
         mine = [r for r in doc["resources"] if r["kind"] == kind]
         assert len(mine) == 3 and sum(1 for r in mine if r.get("exists") is False) == 1
         assert all("REPLACE" in v for r in mine for v in r["ids"].values())
@@ -335,7 +335,7 @@ def test_an_oversized_spec_is_refused_before_it_is_parsed() -> None:
 def test_yaml_aliases_and_anchors_are_refused() -> None:
     from boundarycheck.openapi import OpenApiError, import_openapi  # noqa: PLC0415
 
-    with pytest.raises(OpenApiError, match="(?i)alias|anchor"):
+    with pytest.raises(OpenApiError, match=r"(?i)alias|anchor"):
         import_openapi("openapi: 3.0.3\nx: &a [1]\ny: *a\npaths: {}\n")
 
 
@@ -460,7 +460,7 @@ def test_duplicate_and_odd_operation_ids_become_unique_valid_ids() -> None:
 def test_a_document_with_no_readable_operation_is_a_clear_error() -> None:
     from boundarycheck.openapi import OpenApiError, import_openapi  # noqa: PLC0415
 
-    with pytest.raises(OpenApiError, match="(?i)no GET"):
+    with pytest.raises(OpenApiError, match=r"(?i)no GET"):
         import_openapi(json.dumps({"openapi": "3.0.3", "paths": {"/x": {"post": {"responses": {"200": {}}}}}}))
 
 
