@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from boundarycheck.credentials import COOKIE_NAME, FORBIDDEN_HEADERS, HEADER_NAME, PREFIX, Scheme
 from boundarycheck.netcheck import (
     AddressRefused,
     NotLoopback,
@@ -137,11 +138,40 @@ class Credential(_Model):
 
     env: EnvName | None = None
     fixture: Ident | None = None
+    # How the value is sent (docs/design-v0.3.md s2): a bearer token (default), an API key in a named
+    # header, or a named session cookie. `in` is a Python keyword, hence the alias.
+    scheme: Scheme = Field(default="bearer", alias="in")
+    name: str | None = None
+    prefix: str | None = None
 
     @model_validator(mode="after")
     def _names_something(self) -> Credential:
         if self.env is None and self.fixture is None:
             raise ValueError("a credential must name an environment variable (env) and/or a fixture key (fixture)")
+        if self.scheme == "bearer":
+            if self.name is not None or self.prefix is not None:
+                raise ValueError(
+                    "a bearer credential takes no name or prefix (they belong to in: header or in: cookie)"
+                )
+            return self
+        if self.env is None:
+            raise ValueError("in: header and in: cookie need an env variable that holds the value")
+        if self.name is None:
+            raise ValueError(f"in: {self.scheme} needs a name (the header or cookie name)")
+        if self.scheme == "header":
+            if HEADER_NAME.fullmatch(self.name) is None:
+                raise ValueError("a header name is letters, digits and hyphens, at most 64 characters")
+            if self.name.lower() in FORBIDDEN_HEADERS:
+                raise ValueError(
+                    "this header name is not allowed: it changes how the request is framed or is set by the tool"
+                )
+            if self.prefix is not None and PREFIX.fullmatch(self.prefix) is None:
+                raise ValueError("a prefix is 1 to 32 printable ASCII characters")
+        else:
+            if COOKIE_NAME.fullmatch(self.name) is None:
+                raise ValueError("a cookie name is letters, digits, . _ and -, at most 64 characters")
+            if self.prefix is not None:
+                raise ValueError("a cookie credential takes no prefix")
         return self
 
 

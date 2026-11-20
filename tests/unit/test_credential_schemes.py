@@ -34,14 +34,20 @@ def test_a_bearer_credential_is_the_default_and_unchanged() -> None:
 
 
 def test_an_api_key_header_and_a_cookie_are_accepted() -> None:
-    header = parse(_with_credential({"env": "BC_X", "in": "header", "name": "X-API-Key"})).principals["alice"].credential
+    header = (
+        parse(_with_credential({"env": "BC_X", "in": "header", "name": "X-API-Key"})).principals["alice"].credential
+    )
     cookie = parse(_with_credential({"env": "BC_X", "in": "cookie", "name": "session"})).principals["alice"].credential
     assert header is not None and (header.scheme, header.name) == ("header", "X-API-Key")
     assert cookie is not None and (cookie.scheme, cookie.name) == ("cookie", "session")
 
 
 def test_a_header_credential_may_carry_a_prefix_such_as_token() -> None:
-    cred = parse(_with_credential({"env": "BC_X", "in": "header", "name": "Authorization", "prefix": "Token "})).principals["alice"].credential
+    cred = (
+        parse(_with_credential({"env": "BC_X", "in": "header", "name": "Authorization", "prefix": "Token "}))
+        .principals["alice"]
+        .credential
+    )
     assert cred is not None and cred.prefix == "Token "
 
 
@@ -66,8 +72,25 @@ def test_a_cookie_takes_no_prefix() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["Host", "host", "HOST", "Content-Length", "Content-Type", "Transfer-Encoding", "Connection", "Upgrade", "TE", "Trailer",
-     "Accept", "Accept-Encoding", "User-Agent", "Proxy-Authorization", "Cookie", "Set-Cookie", "cookie"],
+    [
+        "Host",
+        "host",
+        "HOST",
+        "Content-Length",
+        "Content-Type",
+        "Transfer-Encoding",
+        "Connection",
+        "Upgrade",
+        "TE",
+        "Trailer",
+        "Accept",
+        "Accept-Encoding",
+        "User-Agent",
+        "Proxy-Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "cookie",
+    ],
 )
 def test_a_header_name_that_would_change_how_the_request_is_framed_is_refused(name: str) -> None:
     _bad(_with_credential({"env": "BC_X", "in": "header", "name": name}), "header")
@@ -155,15 +178,27 @@ def test_the_header_each_scheme_sends() -> None:
 
     assert Material(value="v" * 12).header() == ("Authorization", "Bearer " + "v" * 12)
     assert Material(value="v" * 12, scheme="header", name="X-API-Key").header() == ("X-API-Key", "v" * 12)
-    assert Material(value="v" * 12, scheme="header", name="Authorization", prefix="Token ").header() == ("Authorization", "Token " + "v" * 12)
+    assert Material(value="v" * 12, scheme="header", name="Authorization", prefix="Token ").header() == (
+        "Authorization",
+        "Token " + "v" * 12,
+    )
     assert Material(value="v" * 12, scheme="cookie", name="session").header() == ("Cookie", "session=" + "v" * 12)
 
 
 # -------------------------------------------------------------------------------- transport ----
-async def _send(materials: dict[str, Any], principal: str | None, server: Any, *, extra: dict[str, Any] | None = None) -> Any:
+async def _send(
+    materials: dict[str, Any], principal: str | None, server: Any, *, extra: dict[str, Any] | None = None
+) -> Any:
     from boundarycheck.transports.live import LiveTransport  # noqa: PLC0415
 
-    transport = LiveTransport(server.base_url, credentials={}, environ={}, materials=materials, resolver=lambda _h: ["127.0.0.1"], **(extra or {}))
+    transport = LiveTransport(
+        server.base_url,
+        credentials={},
+        environ={},
+        materials=materials,
+        resolver=lambda _h: ["127.0.0.1"],
+        **(extra or {}),
+    )
     try:
         return await transport.send("GET", "/v1/x", principal), transport
     finally:
@@ -228,8 +263,18 @@ async def test_a_cookie_the_target_sets_is_never_replayed_next_to_ours() -> None
 
     sid = fake_token("sid")
     with fake_server() as server:
-        server.routes["/v1/x"] = (200, {"content-type": "application/json", "set-cookie": "tracker=evil; Path=/"}, b"{}")
-        transport = LiveTransport(server.base_url, credentials={}, environ={}, materials={"carol": Material(value=sid, scheme="cookie", name="session")}, resolver=lambda _h: ["127.0.0.1"])
+        server.routes["/v1/x"] = (
+            200,
+            {"content-type": "application/json", "set-cookie": "tracker=evil; Path=/"},
+            b"{}",
+        )
+        transport = LiveTransport(
+            server.base_url,
+            credentials={},
+            environ={},
+            materials={"carol": Material(value=sid, scheme="cookie", name="session")},
+            resolver=lambda _h: ["127.0.0.1"],
+        )
         try:
             await transport.send("GET", "/v1/x", "carol")
             await transport.send("GET", "/v1/x", "carol")
@@ -244,7 +289,16 @@ async def test_the_transport_exposes_every_scheme_value_as_a_secret_and_has_cred
 
     a, b = fake_token("a"), fake_token("b")
     with fake_server() as server:
-        transport = LiveTransport(server.base_url, credentials={}, environ={}, resolver=lambda _h: ["127.0.0.1"], materials={"x": Material(value=a, scheme="header", name="K"), "y": Material(value=b, scheme="cookie", name="s")})
+        transport = LiveTransport(
+            server.base_url,
+            credentials={},
+            environ={},
+            resolver=lambda _h: ["127.0.0.1"],
+            materials={
+                "x": Material(value=a, scheme="header", name="K"),
+                "y": Material(value=b, scheme="cookie", name="s"),
+            },
+        )
         try:
             assert sorted(transport.secrets()) == sorted([a, b])
             assert transport.has_credential("x") and transport.has_credential("y") and not transport.has_credential("z")
@@ -259,7 +313,13 @@ async def test_legacy_bearer_credentials_still_work_alongside_materials() -> Non
     tok, key = fake_token("tok"), fake_token("key")
     with fake_server() as server:
         server.json("/v1/x", {})
-        transport = LiveTransport(server.base_url, credentials={"alice": "BC_A"}, environ={"BC_A": tok}, materials={"bob": Material(value=key, scheme="header", name="K")}, resolver=lambda _h: ["127.0.0.1"])
+        transport = LiveTransport(
+            server.base_url,
+            credentials={"alice": "BC_A"},
+            environ={"BC_A": tok},
+            materials={"bob": Material(value=key, scheme="header", name="K")},
+            resolver=lambda _h: ["127.0.0.1"],
+        )
         try:
             await transport.send("GET", "/v1/x", "alice")
             await transport.send("GET", "/v1/x", "bob")
@@ -281,11 +341,20 @@ def test_a_cli_run_with_an_api_key_principal_sends_the_key_in_its_header_and_sto
     data["memberships"] = [{"principal": "alice", "tenant": "A", "role": "owner", "status": "active"}]
     with fake_server() as server:
         # a hostile target that ECHOES the key back in a body and a header
-        server.default = lambda h: h._send(200, {"content-type": "application/json", "x-echo": h.headers.get("X-API-Key", "")}, ('{"echo":"%s"}' % h.headers.get("X-API-Key", "")).encode())
+        server.default = lambda h: h._send(
+            200,
+            {"content-type": "application/json", "x-echo": h.headers.get("X-API-Key", "")},
+            ('{"echo":"' + h.headers.get("X-API-Key", "") + '"}').encode(),
+        )
         data["scope"]["target"]["base_url"] = server.base_url
         path = tmp_path / "c.yaml"
         path.write_text(dump(data))
-        out = CliRunner().invoke(app, ["test", "--config", str(path), "--transport", "live", "--runs-dir", str(tmp_path / "r")], env={"BC_KEY": key}, catch_exceptions=False)
+        out = CliRunner().invoke(
+            app,
+            ["test", "--config", str(path), "--transport", "live", "--runs-dir", str(tmp_path / "r")],
+            env={"BC_KEY": key},
+            catch_exceptions=False,
+        )
         assert any(r["headers"].get("X-API-Key") == key for r in server.requests)
         assert not any("authorization" in {k.lower() for k in r["headers"]} for r in server.requests)
     assert key not in out.output

@@ -35,7 +35,9 @@ def test_the_root_path_with_a_parameter_is_still_a_normal_path() -> None:
     assert {c.path for c in plan(cfg) if c.action.id == "root.read"} == {"/ta", "/tb", "/tc", "/tx"}
 
 
-@pytest.mark.parametrize("path", ["", "//", "///", "/ ", " /", "/?x=1", "/#f", "/..", "/./", "/.", "/%2e", "/a//b", "\\", "/\n"])
+@pytest.mark.parametrize(
+    "path", ["", "//", "///", "/ ", " /", "/?x=1", "/#f", "/..", "/./", "/.", "/%2e", "/a//b", "\\", "/\n"]
+)
 def test_every_other_path_rule_is_unchanged(path: str) -> None:
     from boundarycheck.config import ConfigError, parse_config  # noqa: PLC0415
 
