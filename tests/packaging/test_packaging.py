@@ -17,7 +17,7 @@ pytestmark = pytest.mark.milestone("S4")
 @pytest.fixture(scope="module")
 def dist(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("dist")
-    subprocess.run(["uv", "build", "--out-dir", str(out)], cwd=ROOT, check=True, capture_output=True, text=True)  # noqa: S607
+    subprocess.run(["uv", "build", "--out-dir", str(out)], cwd=ROOT, check=True, capture_output=True, text=True)
     return out
 
 
@@ -25,7 +25,9 @@ def test_the_wheel_contains_the_package_and_never_the_lab(dist: Path) -> None:
     wheel = next(dist.glob("*.whl"))
     names = zipfile.ZipFile(wheel).namelist()
     assert "boundarycheck/py.typed" in names and "boundarycheck/cli.py" in names
-    assert not [n for n in names if n.startswith(("tenantlab", "lab/")) or "/vulnerable/" in n or n.startswith("tests/")]
+    assert not [
+        n for n in names if n.startswith(("tenantlab", "lab/")) or "/vulnerable/" in n or n.startswith("tests/")
+    ]
     assert any(n.endswith("licenses/LICENSE") for n in names) and any(n.endswith("licenses/NOTICE") for n in names)
     meta = next(n for n in names if n.endswith("METADATA"))
     text = zipfile.ZipFile(wheel).read(meta).decode()
@@ -43,13 +45,18 @@ def test_the_source_distribution_does_not_carry_the_lab_submodule(dist: Path) ->
 
 def test_a_clean_environment_runs_the_tool_without_the_lab(dist: Path, tmp_path: Path) -> None:
     venv = tmp_path / "venv"
-    subprocess.run(["uv", "venv", "--python", "3.13", str(venv)], check=True, capture_output=True, text=True)  # noqa: S607
+    subprocess.run(["uv", "venv", "--python", "3.13", str(venv)], check=True, capture_output=True, text=True)
     wheel = next(dist.glob("*.whl"))
-    subprocess.run(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), str(wheel)], check=True, capture_output=True, text=True)  # noqa: S607
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(venv / "bin" / "python"), str(wheel)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     exe = str(venv / "bin" / "boundarycheck")
 
     def call(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([exe, *args], capture_output=True, text=True, cwd=tmp_path, check=False)  # noqa: S603
+        return subprocess.run([exe, *args], capture_output=True, text=True, cwd=tmp_path, check=False)
 
     assert call("--help").returncode == 0
     assert call("validate", "--config", str(EXAMPLE)).returncode == 0

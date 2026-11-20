@@ -27,7 +27,13 @@ def _make(base_url: str, **kw: Any) -> Any:
     return LiveTransport(base_url, **kw)
 
 
-async def _send(server: FakeServer, path: str = "/v1/x", method: str = "GET", principal: str | None = "alice", **kw: Any) -> Any:
+async def _send(
+    server: FakeServer,
+    path: str = "/v1/x",
+    method: str = "GET",
+    principal: str | None = "alice",
+    **kw: Any,
+) -> Any:
     transport = _make(server.base_url, **kw)
     try:
         return await transport.send(method, path, principal)
@@ -71,9 +77,27 @@ async def test_a_non_read_method_is_refused_before_a_socket_is_opened(method: st
 
 @pytest.mark.parametrize(
     "path",
-    ["//evil.invalid/x", "/../x", "/a/../b", "/a b", "http://evil.invalid/", "x", "", "/a?b=1", "/a#f", "/a\\b", "/%2e%2e/x", "/a\n/b", "/a\r\nHost: evil", "/" + "a" * 300, "/é"],
+    [
+        "//evil.invalid/x",
+        "/../x",
+        "/a/../b",
+        "/a b",
+        "http://evil.invalid/",
+        "x",
+        "",
+        "/a?b=1",
+        "/a#f",
+        "/a\\b",
+        "/%2e%2e/x",
+        "/a\n/b",
+        "/a\r\nHost: evil",
+        "/" + "a" * 300,
+        "/é",
+    ],
 )
-async def test_a_path_that_could_smuggle_an_authority_traversal_or_header_is_refused(path: str) -> None:
+async def test_a_path_that_could_smuggle_an_authority_traversal_or_header_is_refused(
+    path: str,
+) -> None:
     from boundarycheck.model import PolicyRefusal  # noqa: PLC0415
 
     with fake_server() as server, pytest.raises(PolicyRefusal):
@@ -84,7 +108,11 @@ async def test_a_path_that_could_smuggle_an_authority_traversal_or_header_is_ref
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
 async def test_a_redirect_is_never_followed(status: int) -> None:
     with fake_server() as server:
-        server.routes["/r"] = (status, {"location": f"{server.base_url}/target", "content-type": "text/plain"}, b"")
+        server.routes["/r"] = (
+            status,
+            {"location": f"{server.base_url}/target", "content-type": "text/plain"},
+            b"",
+        )
         server.json("/target", {"followed": True})
         obs = await _send(server, path="/r")
         assert obs.error == "redirect"
@@ -93,14 +121,22 @@ async def test_a_redirect_is_never_followed(status: int) -> None:
 
 async def test_a_redirect_to_another_host_is_not_followed_either() -> None:
     with fake_server() as server:
-        server.routes["/r"] = (302, {"location": "http://203.0.113.9/steal", "content-type": "text/plain"}, b"")
+        server.routes["/r"] = (
+            302,
+            {"location": "http://203.0.113.9/steal", "content-type": "text/plain"},
+            b"",
+        )
         obs = await _send(server, path="/r")
         assert obs.error == "redirect"
 
 
 async def test_a_response_over_the_size_cap_is_incomplete_not_read_to_the_end() -> None:
     with fake_server() as server:
-        server.routes["/big"] = (200, {"content-type": "application/json"}, b"0" * (3 * 1024 * 1024))
+        server.routes["/big"] = (
+            200,
+            {"content-type": "application/json"},
+            b"0" * (3 * 1024 * 1024),
+        )
         obs = await _send(server, path="/big", max_response_bytes=100_000)
         assert obs.error == "body_too_large" and len(obs.body) <= 100_000
 
@@ -140,7 +176,14 @@ async def test_ordinary_statuses_are_returned_as_observed(status: int) -> None:
 async def test_proxy_environment_variables_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     with fake_server() as target, fake_server() as proxy:
         target.json("/v1/x", {"direct": True})
-        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"):
+        for name in (
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+        ):
             monkeypatch.setenv(name, proxy.base_url)
         monkeypatch.delenv("NO_PROXY", raising=False)
         monkeypatch.delenv("no_proxy", raising=False)
@@ -151,7 +194,16 @@ async def test_proxy_environment_variables_are_ignored(monkeypatch: pytest.Monke
 # ------------------------------------------------------------------------ the target ----
 @pytest.mark.parametrize(
     "url",
-    ["http://192.0.2.7:80", "http://10.1.2.3", "http://0.0.0.0:80", "http://[2001:db8::1]", "https://127.0.0.1:1", "http://example.com", "http://169.254.169.254", "http://[::ffff:10.0.0.1]"],
+    [
+        "http://192.0.2.7:80",
+        "http://10.1.2.3",
+        "http://0.0.0.0:80",
+        "http://[2001:db8::1]",
+        "https://127.0.0.1:1",
+        "http://example.com",
+        "http://169.254.169.254",
+        "http://[::ffff:10.0.0.1]",
+    ],
 )
 def test_a_non_loopback_target_is_refused_at_construction(url: str) -> None:
     from boundarycheck.model import EgressViolation  # noqa: PLC0415
@@ -160,7 +212,17 @@ def test_a_non_loopback_target_is_refused_at_construction(url: str) -> None:
         _make(url, resolver=lambda host: ["192.0.2.7"])
 
 
-@pytest.mark.parametrize("addresses", [["192.0.2.7"], ["127.0.0.1", "192.0.2.7"], ["192.0.2.7", "127.0.0.1"], [], ["::ffff:192.0.2.7"], ["169.254.169.254"]])
+@pytest.mark.parametrize(
+    "addresses",
+    [
+        ["192.0.2.7"],
+        ["127.0.0.1", "192.0.2.7"],
+        ["192.0.2.7", "127.0.0.1"],
+        [],
+        ["::ffff:192.0.2.7"],
+        ["169.254.169.254"],
+    ],
+)
 def test_a_name_must_resolve_only_to_loopback(addresses: list[str]) -> None:
     from boundarycheck.model import EgressViolation  # noqa: PLC0415
 
@@ -226,12 +288,26 @@ async def test_credentials_come_from_the_environment_only_and_are_never_printed(
         transport = _make(server.base_url)
         assert transport.has_credential("alice") is True and transport.has_credential(None) is True
         assert transport.has_credential("bob") is False
-        assert TOKEN not in repr(transport) and TOKEN not in str(transport) and TOKEN not in repr(vars(transport).keys())
+        assert (
+            TOKEN not in repr(transport) and TOKEN not in str(transport) and TOKEN not in repr(vars(transport).keys())
+        )
         assert transport.secrets() == [TOKEN]
         await transport.aclose()
 
 
-@pytest.mark.parametrize("value", ["", " ", "short", "tok with space 12345678", "tok-12345678\r\nX-Evil: 1", "tok-12345678\n", "é" * 12, "x" * 5000])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "short",
+        "tok with space 12345678",
+        "tok-12345678\r\nX-Evil: 1",
+        "tok-12345678\n",
+        "é" * 12,
+        "x" * 5000,
+    ],
+)
 def test_an_unusable_credential_value_counts_as_no_credential(value: str) -> None:
     with fake_server() as server:
         transport = _make(server.base_url, environ={"BC_A": value})

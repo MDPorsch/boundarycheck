@@ -13,11 +13,21 @@ from tests.support import mini, parse
 pytestmark = pytest.mark.milestone("S1")
 
 
-def _obs(status: int | None, body: Any = None, headers: dict[str, str] | None = None, error: str | None = None) -> Any:
+def _obs(
+    status: int | None,
+    body: Any = None,
+    headers: dict[str, str] | None = None,
+    error: str | None = None,
+) -> Any:
     from boundarycheck.model import Observation  # noqa: PLC0415
 
     raw = b"" if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
-    return Observation(status=status, headers={"content-type": "application/json", **(headers or {})}, body=raw, error=error)
+    return Observation(
+        status=status,
+        headers={"content-type": "application/json", **(headers or {})},
+        body=raw,
+        error=error,
+    )
 
 
 def _case(principal: str | None, action: str, resource: str, data: dict[str, Any] | None = None) -> Any:
@@ -28,7 +38,13 @@ def _case(principal: str | None, action: str, resource: str, data: dict[str, Any
     return cfg, next(c for c in plan(cfg) if c.key == key)
 
 
-def _verdict(principal: str | None, action: str, resource: str, observation: Any, data: dict[str, Any] | None = None) -> Any:
+def _verdict(
+    principal: str | None,
+    action: str,
+    resource: str,
+    observation: Any,
+    data: dict[str, Any] | None = None,
+) -> Any:
     from boundarycheck.comparator import compare  # noqa: PLC0415
 
     cfg, case = _case(principal, action, resource, data)
@@ -40,7 +56,14 @@ DETAIL = {"id": "pa1", "title": "t", "contacts": [{"id": "c1"}]}
 
 @pytest.mark.parametrize(
     ("status", "outcome"),
-    [(200, "allow"), (201, "allow"), (204, "allow"), (401, "deny_unauthenticated"), (403, "deny_forbidden"), (404, "deny_not_found")],
+    [
+        (200, "allow"),
+        (201, "allow"),
+        (204, "allow"),
+        (401, "deny_unauthenticated"),
+        (403, "deny_forbidden"),
+        (404, "deny_not_found"),
+    ],
 )
 def test_classify_maps_only_the_documented_statuses(status: int, outcome: str) -> None:
     from boundarycheck.comparator import classify  # noqa: PLC0415
@@ -48,7 +71,10 @@ def test_classify_maps_only_the_documented_statuses(status: int, outcome: str) -
     assert classify(_obs(status)).value == outcome
 
 
-@pytest.mark.parametrize("status", [100, 301, 302, 304, 307, 400, 405, 409, 410, 413, 415, 418, 422, 429, 500, 502, 503, 504, 599])
+@pytest.mark.parametrize(
+    "status",
+    [100, 301, 302, 304, 307, 400, 405, 409, 410, 413, 415, 418, 422, 429, 500, 502, 503, 504, 599],
+)
 def test_every_other_status_is_unmapped(status: int) -> None:
     from boundarycheck.comparator import classify  # noqa: PLC0415
 
@@ -79,7 +105,12 @@ def test_each_reason_has_its_own_rule_id() -> None:
         "BC-STATE-01": ("dis", "project.read", "PA1", _obs(200, DETAIL)),
         "BC-STATE-02": ("gina", "project.read", "PC1", _obs(200, DETAIL)),
         "BC-SCOPE-01": ("alice", "project.read", "PA2", _obs(200, DETAIL)),
-        "BC-ROLE-01": ("bob", "contact.private.read", "PA1", _obs(200, {"items": [], "next_cursor": None, "total": 0})),
+        "BC-ROLE-01": (
+            "bob",
+            "contact.private.read",
+            "PA1",
+            _obs(200, {"items": [], "next_cursor": None, "total": 0}),
+        ),
     }
     for rule, (p, a, r, o) in cases.items():
         v = _verdict(p, a, r, o)
@@ -138,7 +169,11 @@ def test_a_redirect_is_policy_denied() -> None:
 def test_a_list_may_only_name_objects_the_principal_may_see() -> None:
     ok = {"items": [{"id": "pa1", "title": "t"}], "next_cursor": None, "total": 1}
     assert _verdict("alice", "project.list", "tA", _obs(200, ok)).status.value == "no_issue_observed"
-    leak = {"items": [{"id": "pa1", "title": "t"}, {"id": "pa2", "title": "hidden"}], "next_cursor": None, "total": 1}
+    leak = {
+        "items": [{"id": "pa1", "title": "t"}, {"id": "pa2", "title": "hidden"}],
+        "next_cursor": None,
+        "total": 1,
+    }
     v = _verdict("alice", "project.list", "tA", _obs(200, leak))
     assert v.status.value == "finding_candidate" and v.rule_id == "BC-LIST-01"
     assert "pa2" in v.detail
@@ -164,7 +199,11 @@ def test_a_list_envelope_may_not_carry_extra_keys() -> None:
 def test_page_items_are_checked_against_the_surface_fields() -> None:
     clean = {"items": [{"id": "c1", "email_private": "x"}], "next_cursor": None, "total": 1}
     assert _verdict("alice", "contact.private.read", "PA1", _obs(200, clean)).status.value == "no_issue_observed"
-    leaky = {"items": [{"id": "c1", "email_private": "x", "ssn": "y"}], "next_cursor": None, "total": 1}
+    leaky = {
+        "items": [{"id": "c1", "email_private": "x", "ssn": "y"}],
+        "next_cursor": None,
+        "total": 1,
+    }
     assert _verdict("alice", "contact.private.read", "PA1", _obs(200, leaky)).status.value == "finding_candidate"
 
 
@@ -183,8 +222,12 @@ def test_signature_notices_status_content_type_and_body_differences() -> None:
     base = _obs(404, {"code": "resource.not_found"})
     assert signature(base, []) != signature(_obs(403, {"code": "resource.not_found"}), [])
     assert signature(base, []) != signature(_obs(404, {"code": "other"}), [])
-    assert signature(base, []) != signature(_obs(404, {"code": "resource.not_found"}, {"content-type": "text/plain"}), [])
-    assert signature(base, []) != signature(_obs(404, {"code": "resource.not_found"}, {"cache-control": "no-store"}), [])
+    assert signature(base, []) != signature(
+        _obs(404, {"code": "resource.not_found"}, {"content-type": "text/plain"}), []
+    )
+    assert signature(base, []) != signature(
+        _obs(404, {"code": "resource.not_found"}, {"cache-control": "no-store"}), []
+    )
 
 
 def test_signature_ignores_volatile_fields_at_any_depth() -> None:

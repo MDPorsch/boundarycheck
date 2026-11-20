@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.support import EXAMPLE
+from tests.support import EXAMPLE, VULN_EXAMPLE
 
 pytestmark = pytest.mark.milestone("S2")
 
@@ -21,7 +21,11 @@ async def _lab(variant: str = "patched", flaws: tuple[str, ...] = (), data: dict
     from boundarycheck.engine import run  # noqa: PLC0415
     from boundarycheck.transports.lab_fixture import LabFixtureTransport  # noqa: PLC0415
 
-    cfg = parse_config(yaml.safe_dump(data, sort_keys=False)) if data else load_config(EXAMPLE)
+    cfg = (
+        parse_config(yaml.safe_dump(data, sort_keys=False))
+        if data
+        else load_config(VULN_EXAMPLE if variant == "vulnerable" else EXAMPLE)
+    )
     async with LabFixtureTransport.open(cfg, variant=variant, flaws=flaws) as transport:
         return await run(cfg, transport)
 
@@ -39,7 +43,9 @@ def _summary(result: Any) -> dict[str, int]:
 
 async def test_the_patched_lab_is_clean() -> None:
     result = await _lab()
-    assert _summary(result) == {"no_issue_observed": len(result.cases)}, [(c.key, c.status.value, c.detail) for c in result.cases if c.status.value != "no_issue_observed"][:5]
+    assert _summary(result) == {"no_issue_observed": len(result.cases)}, [
+        (c.key, c.status.value, c.detail) for c in result.cases if c.status.value != "no_issue_observed"
+    ][:5]
     assert len(result.cases) >= 240 and result.exit_code == 0
     assert result.transport == "fixture:tenant-boundary-lab:patched"
 
@@ -51,13 +57,24 @@ async def test_the_vulnerable_lab_with_every_flaw_off_is_clean_too() -> None:
 
 SINGLE = {
     "TENANT_PREDICATE_OMITTED": (
-        {"bob:project.read:PB1", "bob:project.list:tenant-B", "bob:invoice.read:IB1", "bob:invoice.read.nested:IB1"},
-        {"BC-TENANT-01"},
+        {"bob:project.read:PB1", "bob:project.list:tenant-B", "bob:invoice.read:IB1"},
+        {
+            "BC-TENANT-01",
+            "BC-FIELDS-01",
+        },  # FIELDS: the editor role of one tenant bleeds into another
     ),
     "ROLE_CHECK_MISSING": ({"bob:contact.private.read:PA1"}, {"BC-ROLE-01"}),
-    "PRIVATE_PROPERTY_SERIALIZED": ({"bob:project.read:PA1", "alice:project.read:PA1"}, {"BC-FIELDS-01"}),
+    "PRIVATE_PROPERTY_SERIALIZED": (
+        {"bob:project.read:PA1", "alice:project.read:PA1"},
+        {"BC-FIELDS-01"},
+    ),
     "MARKET_BOUNDARY_OMITTED": (
-        {"alice:project.read:PA2", "alice:invoice.read:IA2", "alice:contact.private.read:PA2", "alice:project.list:tenant-A"},
+        {
+            "alice:project.read:PA2",
+            "alice:invoice.read:IA2",
+            "alice:contact.private.read:PA2",
+            "alice:project.list:tenant-A",
+        },
         {"BC-SCOPE-01", "BC-LIST-01"},
     ),
 }
@@ -71,15 +88,30 @@ async def test_each_flaw_is_detected_and_only_its_own_rule_families_fire(flaw: s
     assert result.exit_code == 1
     assert must_find <= set(found), sorted(must_find - set(found))
     assert {c.rule_id for c in found.values()} <= allowed_rules, {c.rule_id for c in found.values()} - allowed_rules
-    # nothing else went wrong: every non-finding case is clean
-    assert {c.status.value for c in result.cases if c.key not in found} == {"no_issue_observed"}
+    # nothing else went wrong: every other case is clean, or a concealment comparison that was not
+    # evaluated precisely because one of its two requests is itself a finding
+    for c in (c for c in result.cases if c.key not in found):
+        assert c.status.value == "no_issue_observed" or (
+            c.rule_id == "BC-CONCEAL-01" and c.status.value == "inconclusive" and "finding_candidate" in c.detail
+        ), (c.key, c.status.value, c.detail)
+
+
+async def test_the_tenant_flaw_has_two_further_consequences_the_tool_attributes_correctly() -> None:
+    """Beyond the lab's own exploit list: an unscoped membership lookup (1) lets the editor role of
+    tenant A bleed into tenant B (dave sees owner_principal_id on B's project) and (2) makes the
+    suspended-tenant member gina answer 403 where a non-member must get 404 (existence oracle)."""
+    found = _findings(await _lab("vulnerable", ("TENANT_PREDICATE_OMITTED",)))
+    bleed = found["dave:project.read:PB1"]
+    assert bleed.rule_id == "BC-FIELDS-01" and "owner_principal_id" in bleed.detail
+    oracle = found["gina:project.read:PA1"]
+    assert oracle.rule_id == "BC-TENANT-01" and oracle.severity == "medium" and "existence" in oracle.detail
 
 
 async def test_the_private_property_finding_names_the_field_never_the_value() -> None:
     result = await _lab("vulnerable", ("PRIVATE_PROPERTY_SERIALIZED",))
     detail = _findings(result)["bob:project.read:PA1"].detail
     assert "contacts[].email_private" in detail and "SENTINEL" not in detail
-    assert "SENTINEL" not in json.dumps(result.evidence)  # masked by redaction.mask_fields
+    assert "SENTINEL-PRIV" not in json.dumps(result.evidence)  # the private values are masked by redaction.mask_fields
 
 
 async def test_the_market_flaw_is_found_in_the_list_total_as_well_as_in_the_item() -> None:
@@ -92,7 +124,9 @@ async def test_all_four_flaws_together_trip_every_rule_family() -> None:
 
     result = await _lab("vulnerable", ALL_FLAWS)
     assert result.exit_code == 1
-    assert {"BC-TENANT-01", "BC-ROLE-01", "BC-FIELDS-01", "BC-SCOPE-01", "BC-LIST-01"} <= {c.rule_id for c in _findings(result).values()}
+    assert {"BC-TENANT-01", "BC-ROLE-01", "BC-FIELDS-01", "BC-SCOPE-01", "BC-LIST-01"} <= {
+        c.rule_id for c in _findings(result).values()
+    }
 
 
 async def test_a_hidden_market_object_is_indistinguishable_from_a_missing_one_on_the_patched_lab() -> None:
@@ -110,6 +144,9 @@ async def test_the_fixture_run_is_reproducible() -> None:
             doc.pop(key, None)
         for case in doc["cases"]:
             case.pop("observed_at", None)
+            # The evidence is the real (redacted) response, and the lab puts a fresh request id in
+            # every error body, so the evidence HASHES differ between runs. Every verdict is identical.
+            case.pop("redacted_evidence_refs", None)
         return doc
 
     assert scrub(to_json(await _lab())) == scrub(to_json(await _lab()))
@@ -158,5 +195,8 @@ async def test_documented_inconclusive_a_response_the_tool_cannot_map_is_never_c
             res["ids"]["project_id"] = "not-a-uuid"
     result = await _lab(data=data)
     inconclusive = [c for c in result.cases if c.status.value == "inconclusive"]
-    assert inconclusive and all(c.resource == "project-missing" for c in inconclusive)
+    assert inconclusive and all(
+        c.resource == "project-missing" or c.key.endswith("~project-missing") for c in inconclusive
+    )
+    assert any(c.resource == "project-missing" and c.rule_id != "BC-CONCEAL-01" for c in inconclusive)
     assert result.exit_code == 2

@@ -13,7 +13,18 @@ pytestmark = pytest.mark.milestone("S1")
 SRC = Path(__file__).resolve().parents[2] / "src" / "boundarycheck"
 JUDGES = ("oracle.py", "comparator.py")
 ALLOWED_FOR_JUDGES = {"boundarycheck.model", "boundarycheck.config"}
-STDLIB_OK = {"__future__", "collections", "dataclasses", "enum", "hashlib", "json", "typing", "re", "functools", "itertools"}
+STDLIB_OK = {
+    "__future__",
+    "collections",
+    "dataclasses",
+    "enum",
+    "hashlib",
+    "json",
+    "typing",
+    "re",
+    "functools",
+    "itertools",
+}
 
 
 def _imports(path: Path) -> set[str]:
@@ -35,7 +46,10 @@ def test_the_judges_import_only_the_neutral_model_and_the_standard_library(name:
     for module in _imports(SRC / name):
         root = module.split(".")[0]
         if root == "boundarycheck":
-            assert module in ALLOWED_FOR_JUDGES or module.startswith(tuple(ALLOWED_FOR_JUDGES)), (name, module)
+            assert module in ALLOWED_FOR_JUDGES or module.startswith(tuple(ALLOWED_FOR_JUDGES)), (
+                name,
+                module,
+            )
         else:
             assert root in STDLIB_OK, (name, module)
 
@@ -43,7 +57,9 @@ def test_the_judges_import_only_the_neutral_model_and_the_standard_library(name:
 def _modules() -> list[Path]:
     """Every product module; a vacuous pass (no files) is a failure, never a pass."""
     found = sorted(SRC.rglob("*.py"))
-    assert len(found) >= 10 and (SRC / "transports" / "lab_fixture.py").is_file(), "the product modules do not exist yet"
+    assert len(found) >= 10 and (SRC / "transports" / "lab_fixture.py").is_file(), (
+        "the product modules do not exist yet"
+    )
     return found
 
 

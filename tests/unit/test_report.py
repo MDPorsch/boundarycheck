@@ -11,7 +11,25 @@ from tests.support import FakeTransport, compliant, mini, parse
 
 pytestmark = pytest.mark.milestone("S1")
 
-CASE_KEYS = {"id", "key", "rule_id", "status", "severity", "confidence", "principal", "action", "resource", "expected", "observed", "reason", "detail", "redacted_evidence_refs", "limitations", "review_state", "observed_at"}
+CASE_KEYS = {
+    "id",
+    "key",
+    "rule_id",
+    "status",
+    "severity",
+    "confidence",
+    "principal",
+    "action",
+    "resource",
+    "expected",
+    "observed",
+    "reason",
+    "detail",
+    "redacted_evidence_refs",
+    "limitations",
+    "review_state",
+    "observed_at",
+}
 
 
 async def _result(tweak: Any = None, data: dict[str, Any] | None = None) -> Any:
@@ -24,14 +42,14 @@ async def _result(tweak: Any = None, data: dict[str, Any] | None = None) -> Any:
 async def test_the_json_report_has_the_documented_shape() -> None:
     from boundarycheck.report import to_json  # noqa: PLC0415
 
-    cfg, result = await _result()
+    _cfg, result = await _result()
     doc = json.loads(to_json(result))
     assert doc["schema_version"] == "1" and doc["tool"]["name"] == "boundarycheck" and doc["tool"]["version"]
     assert doc["scope"] == {"id": "unit", "target_label": "unit-target"} and doc["transport"] == "fake"
     assert "attested" in doc["attestation"].lower() or "not required" in doc["attestation"].lower()
     assert doc["summary"]["exit_code"] == 0 and doc["summary"]["total"] == len(doc["cases"])
     assert sum(doc["summary"]["by_status"].values()) == len(doc["cases"])
-    assert all(CASE_KEYS <= set(c) for c in doc["cases"])
+    assert all(set(c) >= CASE_KEYS for c in doc["cases"])
     assert any("secure" in lim for lim in doc["limitations"])
     assert any("write" in lim.lower() for lim in doc["limitations"])
     assert any("policy" in lim.lower() for lim in doc["limitations"])
@@ -95,11 +113,15 @@ async def test_markdown_cannot_be_broken_or_injected_by_hostile_response_content
     from boundarycheck.model import Observation  # noqa: PLC0415
     from boundarycheck.report import to_markdown  # noqa: PLC0415
 
-    evil = 'x`\n| fake | row |\n# Heading\n<script>alert(1)</script>[link](http://evil.invalid)'
+    evil = "x`\n| fake | row |\n# Heading\n<script>alert(1)</script>[link](http://evil.invalid)"
 
     def leak(case: Any, obs: Any) -> Any:
         if case.key == "alice:project.read:PA1":
-            return Observation(status=200, headers={"content-type": "application/json"}, body=('{"id":"pa1","' + evil.replace('"', "").replace("\n", "\\n") + '":1}').encode())
+            return Observation(
+                status=200,
+                headers={"content-type": "application/json"},
+                body=('{"id":"pa1","' + evil.replace('"', "").replace("\n", "\\n") + '":1}').encode(),
+            )
         return obs
 
     _cfg, result = await _result(leak)
@@ -113,4 +135,5 @@ async def test_a_clean_run_report_does_not_say_secure() -> None:
 
     _cfg, result = await _result()
     md = to_markdown(result).lower()
-    assert "is secure" not in md and "no vulnerabilities" not in md
+    # the only place the word may appear is the disclaimer that says the opposite
+    assert md.count("is secure") == md.count("does not mean the target is secure") and "no vulnerabilities" not in md

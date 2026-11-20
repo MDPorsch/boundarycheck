@@ -3,6 +3,7 @@ module fails the CALLING test with an explicit message (a red test), never the w
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import gzip
 import json
@@ -18,6 +19,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "lab.yaml"
+VULN_EXAMPLE = ROOT / "examples" / "lab-vulnerable.yaml"
 LOOPBACK = "127.0.0.1"
 
 
@@ -26,7 +28,10 @@ def mini() -> dict[str, Any]:
     return copy.deepcopy(
         {
             "version": 1,
-            "scope": {"id": "unit", "target": {"label": "unit-target", "base_url": "http://127.0.0.1:9"}},
+            "scope": {
+                "id": "unit",
+                "target": {"label": "unit-target", "base_url": "http://127.0.0.1:9"},
+            },
             "tenants": [
                 {"key": "A", "state": "active", "allowed": {"market": ["UK"]}},
                 {"key": "B", "state": "active", "allowed": {"market": ["US"]}},
@@ -53,20 +58,65 @@ def mini() -> dict[str, Any]:
                 {"key": "tB", "kind": "tenant", "tenant": "B", "ids": {"tenant_id": "tb"}},
                 {"key": "tC", "kind": "tenant", "tenant": "C", "ids": {"tenant_id": "tc"}},
                 {"key": "tX", "kind": "tenant", "exists": False, "ids": {"tenant_id": "tx"}},
-                {"key": "PA1", "kind": "project", "tenant": "A", "attributes": {"market": "UK"}, "ids": {"project_id": "pa1"}},
-                {"key": "PA2", "kind": "project", "tenant": "A", "attributes": {"market": "US"}, "ids": {"project_id": "pa2"}},
-                {"key": "PB1", "kind": "project", "tenant": "B", "attributes": {"market": "US"}, "ids": {"project_id": "pb1"}},
-                {"key": "PC1", "kind": "project", "tenant": "C", "attributes": {"market": "UK"}, "ids": {"project_id": "pc1"}},
+                {
+                    "key": "PA1",
+                    "kind": "project",
+                    "tenant": "A",
+                    "attributes": {"market": "UK"},
+                    "ids": {"project_id": "pa1"},
+                },
+                {
+                    "key": "PA2",
+                    "kind": "project",
+                    "tenant": "A",
+                    "attributes": {"market": "US"},
+                    "ids": {"project_id": "pa2"},
+                },
+                {
+                    "key": "PB1",
+                    "kind": "project",
+                    "tenant": "B",
+                    "attributes": {"market": "US"},
+                    "ids": {"project_id": "pb1"},
+                },
+                {
+                    "key": "PC1",
+                    "kind": "project",
+                    "tenant": "C",
+                    "attributes": {"market": "UK"},
+                    "ids": {"project_id": "pc1"},
+                },
                 {"key": "PX", "kind": "project", "exists": False, "ids": {"project_id": "px"}},
             ],
             "actions": [
-                {"id": "project.read", "method": "GET", "path": "/v1/projects/{project_id}", "resource_kind": "project", "surface": "project.detail"},
                 {
-                    "id": "project.list", "method": "GET", "path": "/v1/tenants/{tenant_id}/projects",
-                    "resource_kind": "tenant", "surface": "project.list_item",
-                    "list": {"kind": "project", "id_key": "project_id", "item_id_field": "id", "total_field": "total"},
+                    "id": "project.read",
+                    "method": "GET",
+                    "path": "/v1/projects/{project_id}",
+                    "resource_kind": "project",
+                    "surface": "project.detail",
                 },
-                {"id": "contact.private.read", "method": "GET", "path": "/v1/projects/{project_id}/contacts", "resource_kind": "project", "surface": "contacts.private", "page": True},
+                {
+                    "id": "project.list",
+                    "method": "GET",
+                    "path": "/v1/tenants/{tenant_id}/projects",
+                    "resource_kind": "tenant",
+                    "surface": "project.list_item",
+                    "list": {
+                        "kind": "project",
+                        "id_key": "project_id",
+                        "item_id_field": "id",
+                        "total_field": "total",
+                    },
+                },
+                {
+                    "id": "contact.private.read",
+                    "method": "GET",
+                    "path": "/v1/projects/{project_id}/contacts",
+                    "resource_kind": "project",
+                    "surface": "contacts.private",
+                    "page": True,
+                },
             ],
             "policy": {
                 "roles": ["viewer", "editor", "admin", "owner"],
@@ -77,7 +127,13 @@ def mini() -> dict[str, Any]:
                     "contact.private.read": ["admin", "owner"],
                 },
                 "fields": {
-                    "project.detail": {"id": "viewer", "title": "viewer", "contacts": "viewer", "contacts[].id": "viewer", "owner_principal_id": "editor"},
+                    "project.detail": {
+                        "id": "viewer",
+                        "title": "viewer",
+                        "contacts": "viewer",
+                        "contacts[].id": "viewer",
+                        "owner_principal_id": "editor",
+                    },
                     "project.list_item": {"id": "viewer", "title": "viewer"},
                     "contacts.private": {"id": "viewer", "email_private": "admin"},
                 },
@@ -131,10 +187,8 @@ class FakeServer:
                     self.send_header(name, value)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                try:
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                     self.wfile.write(body)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
 
         self.send = Handler._send
         self.httpd = ThreadingHTTPServer((LOOPBACK, 0), Handler)
@@ -143,7 +197,11 @@ class FakeServer:
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
 
     def json(self, path: str, payload: Any, status: int = 200) -> None:
-        self.routes[path] = (status, {"content-type": "application/json"}, json.dumps(payload).encode())
+        self.routes[path] = (
+            status,
+            {"content-type": "application/json"},
+            json.dumps(payload).encode(),
+        )
 
     def start(self) -> None:
         self._thread.start()
@@ -166,7 +224,7 @@ def fake_server() -> Iterator[FakeServer]:
 def slow(seconds: float) -> Callable[[Any], None]:
     def handler(h: Any) -> None:
         time.sleep(seconds)
-        h._send(200, {"content-type": "application/json"}, b"{}")  # noqa: SLF001
+        h._send(200, {"content-type": "application/json"}, b"{}")
 
     return handler
 
@@ -175,7 +233,7 @@ def gzip_bomb(decoded_bytes: int) -> Callable[[Any], None]:
     payload = gzip.compress(b"0" * decoded_bytes)
 
     def handler(h: Any) -> None:
-        h._send(200, {"content-type": "application/json", "content-encoding": "gzip"}, payload)  # noqa: SLF001
+        h._send(200, {"content-type": "application/json", "content-encoding": "gzip"}, payload)
 
     return handler
 
@@ -186,7 +244,12 @@ class FakeTransport:
 
     name = "fake"
 
-    def __init__(self, responder: Callable[[str, str, str | None], Any], creds: set[str] | None = None, secrets: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responder: Callable[[str, str, str | None], Any],
+        creds: set[str] | None = None,
+        secrets: list[str] | None = None,
+    ) -> None:
         self.responder = responder
         self.creds = creds
         self._secrets = secrets or []
@@ -218,7 +281,12 @@ def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) ->
     from boundarycheck.planner import plan  # noqa: PLC0415
 
     by_request = {(c.principal, c.path): c for c in plan(config)}
-    status = {Outcome.ALLOW: 200, Outcome.DENY_UNAUTHENTICATED: 401, Outcome.DENY_FORBIDDEN: 403, Outcome.DENY_NOT_FOUND: 404}
+    status = {
+        Outcome.ALLOW: 200,
+        Outcome.DENY_UNAUTHENTICATED: 401,
+        Outcome.DENY_FORBIDDEN: 403,
+        Outcome.DENY_NOT_FOUND: 404,
+    }
     counter = {"n": 0}
 
     def respond(method: str, path: str, principal: str | None) -> Any:
@@ -229,7 +297,11 @@ def compliant(config: Any, *, tweak: Callable[[Any, Any], Any] | None = None) ->
         if exp.outcome is Outcome.ALLOW:
             if case.action.list_spec is not None:
                 ids = sorted(exp.visible_ids or [])
-                body: Any = {"items": [{"id": i, "title": "t"} for i in ids], "next_cursor": None, "total": len(ids)}
+                body: Any = {
+                    "items": [{"id": i, "title": "t"} for i in ids],
+                    "next_cursor": None,
+                    "total": len(ids),
+                }
             elif case.action.page:
                 body = {"items": [], "next_cursor": None, "total": 0}
             else:

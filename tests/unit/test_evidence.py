@@ -29,7 +29,9 @@ async def _saved(root: Path, secrets: list[str] | None = None, now: datetime | N
     return store, result, path
 
 
-async def test_a_run_is_stored_with_private_permissions_and_content_addressed_evidence(tmp_path: Path) -> None:
+async def test_a_run_is_stored_with_private_permissions_and_content_addressed_evidence(
+    tmp_path: Path,
+) -> None:
     _store, result, path = await _saved(tmp_path / "runs")
     assert path.name == result.run_id
     assert (path / "report.json").is_file() and (path / "report.md").is_file()
@@ -49,9 +51,9 @@ async def test_a_world_writable_runs_directory_is_refused(tmp_path: Path) -> Non
     root = tmp_path / "shared"
     root.mkdir()
     root.chmod(0o777)
-    with pytest.raises(StoreError, match="(?i)writable"):
+    with pytest.raises(StoreError, match=r"(?i)writable"):
         RunStore(root).list_runs()
-    with pytest.raises(StoreError, match="(?i)writable"):
+    with pytest.raises(StoreError, match=r"(?i)writable"):
         await _saved(root)
 
 
@@ -68,7 +70,19 @@ async def test_nothing_is_written_when_a_secret_would_be_stored(tmp_path: Path) 
     assert not (tmp_path / "runs").exists() or list((tmp_path / "runs").iterdir()) == []
 
 
-@pytest.mark.parametrize("bad", ["../x", "..", "a/b", "", "x" * 80, "20261119T201500Z-ZZZZZZZZ", "20261119T201500Z-abcdef1", ".hidden"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../x",
+        "..",
+        "a/b",
+        "",
+        "x" * 80,
+        "20261119T201500Z-ZZZZZZZZ",
+        "20261119T201500Z-abcdef1",
+        ".hidden",
+    ],
+)
 def test_run_ids_are_validated_so_nothing_can_traverse(bad: str, tmp_path: Path) -> None:
     from boundarycheck.evidence import RunStore, StoreError, valid_run_id  # noqa: PLC0415
 
@@ -83,7 +97,9 @@ def test_a_well_formed_run_id_is_accepted() -> None:
     assert valid_run_id("20261119T201500Z-abcdef12") is True
 
 
-async def test_read_report_returns_what_was_saved_and_rejects_unknown_formats(tmp_path: Path) -> None:
+async def test_read_report_returns_what_was_saved_and_rejects_unknown_formats(
+    tmp_path: Path,
+) -> None:
     from boundarycheck.evidence import StoreError  # noqa: PLC0415
 
     store, result, _path = await _saved(tmp_path / "runs")
@@ -91,7 +107,7 @@ async def test_read_report_returns_what_was_saved_and_rejects_unknown_formats(tm
     assert store.read_report(result.run_id, "md").startswith("# boundarycheck report")
     with pytest.raises(StoreError):
         store.read_report(result.run_id, "html")
-    with pytest.raises(StoreError, match="(?i)no such run"):
+    with pytest.raises(StoreError, match=r"(?i)no such run"):
         store.read_report("20200101T000000Z-00000000", "json")
 
 
@@ -134,7 +150,15 @@ async def test_purge_never_follows_a_symlink_out_of_the_runs_directory(tmp_path:
     assert (outside / "precious").read_text() == "do not delete"
 
 
-@pytest.mark.parametrize(("text", "delta"), [("30d", timedelta(days=30)), ("12h", timedelta(hours=12)), ("45m", timedelta(minutes=45)), ("1d", timedelta(days=1))])
+@pytest.mark.parametrize(
+    ("text", "delta"),
+    [
+        ("30d", timedelta(days=30)),
+        ("12h", timedelta(hours=12)),
+        ("45m", timedelta(minutes=45)),
+        ("1d", timedelta(days=1)),
+    ],
+)
 def test_retention_ages_parse(text: str, delta: timedelta) -> None:
     from boundarycheck.evidence import parse_age  # noqa: PLC0415
 

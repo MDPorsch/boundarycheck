@@ -74,24 +74,27 @@ markers = [
 
 # ------------------------------------------------------------------ ruff ----
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py313"
 src = ["src", "tests"]
+extend-exclude = ["lab"]   # the reference target is a separate project with its own configuration
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PT", "ASYNC", "T20", "PL"]
 ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S311", "S104", "S108", "PLR0913", "PLR0915"]
+# PT018: a composite assertion states one property; E501: long literals in test data.
+"tests/**" = ["S101", "S105", "S106", "S311", "S104", "S108", "S603", "S607", "PLR0913", "PLR0915", "PLR0917", "PT018", "E501"]
 "tools/**" = ["E501", "PLR0913", "T201", "S603", "S607"]
-"src/boundarycheck/cli.py" = ["T201"]
+"src/boundarycheck/cli.py" = ["T201", "PLR0913", "PLR0917"]  # a CLI command has one parameter per option
 
 # ------------------------------------------------------------------ mypy ----
 [tool.mypy]
 python_version = "3.13"
 strict = true
 files = ["src"]
+exclude = ["^lab/"]
 plugins = ["pydantic.mypy"]
 
 # -------------------------------------------------------------- coverage ----

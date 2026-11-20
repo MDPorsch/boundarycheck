@@ -64,7 +64,7 @@ def test_the_size_cap_is_enforced_before_parsing(tmp_path: Path) -> None:
 
     big = tmp_path / "big.yaml"
     big.write_text("version: 1\n# " + "x" * (MAX_CONFIG_BYTES + 10) + "\n")
-    with pytest.raises(_err(), match="(?i)too large"):
+    with pytest.raises(_err(), match=r"(?i)too large"):
         load_config(big)
 
 
@@ -136,7 +136,24 @@ def test_no_type_coercion_an_unquoted_number_is_not_a_string() -> None:
     _bad(dump(data))
 
 
-@pytest.mark.parametrize("bad", ["../etc", "a/b", "a b", "a?b", "a#b", "%2e%2e", "a\nb", "é", "", ".hidden", "x" * 129, "a\\b", "a@b"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../etc",
+        "a/b",
+        "a b",
+        "a?b",
+        "a#b",
+        "%2e%2e",
+        "a\nb",
+        "é",
+        "",
+        ".hidden",
+        "x" * 129,
+        "a\\b",
+        "a@b",
+    ],
+)
 def test_identifiers_are_validated_against_a_strict_alphabet(bad: str) -> None:
     data = mini()
     data["resources"][4]["ids"]["project_id"] = bad
@@ -158,7 +175,19 @@ def test_the_refusal_of_writes_says_why() -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["v1/x", "/v1/{a}/../x", "//evil/x", "/v1/x?y=1", "/v1/x#f", "/v1/ x", "/v1/{a b}", "/v1/%2e%2e/x", "/v1\\x", "http://evil/x", "/" + "a" * 300],
+    [
+        "v1/x",
+        "/v1/{a}/../x",
+        "//evil/x",
+        "/v1/x?y=1",
+        "/v1/x#f",
+        "/v1/ x",
+        "/v1/{a b}",
+        "/v1/%2e%2e/x",
+        "/v1\\x",
+        "http://evil/x",
+        "/" + "a" * 300,
+    ],
 )
 def test_action_paths_cannot_smuggle_an_authority_traversal_or_a_query(path: str) -> None:
     data = mini()
@@ -169,14 +198,14 @@ def test_action_paths_cannot_smuggle_an_authority_traversal_or_a_query(path: str
 @pytest.mark.parametrize(
     "url",
     [
-        "https://127.0.0.1:8000",        # not http
+        "https://127.0.0.1:8000",  # not http
         "http://example.com",
         "http://127.0.0.1.evil.example",
         "http://user:pw@127.0.0.1:8000",
         "http://0.0.0.0:8000",
         "http://10.0.0.5",
         "http://[2001:db8::1]:8000",
-        "http://2130706433",              # decimal form of 127.0.0.1: a name, not a literal
+        "http://2130706433",  # decimal form of 127.0.0.1: a name, not a literal
         "http://127.1",
         "http://localhost.:8000",
         "http://127.0.0.1:8000/base?x=1",
@@ -192,7 +221,17 @@ def test_a_remote_or_odd_base_url_is_refused(url: str) -> None:
     _bad(dump(data))
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1:8000", "http://127.0.0.1", "http://127.5.5.5:1", "http://[::1]:8000", "http://localhost:8000", "http://LOCALHOST:8000/"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1",
+        "http://127.5.5.5:1",
+        "http://[::1]:8000",
+        "http://localhost:8000",
+        "http://LOCALHOST:8000/",
+    ],
+)
 def test_loopback_base_urls_are_accepted(url: str) -> None:
     data = mini()
     data["scope"]["target"]["base_url"] = url
@@ -210,7 +249,17 @@ def test_the_refusal_of_a_remote_host_names_what_v0_2_will_require() -> None:
     assert "v0.2" in str(info.value)
 
 
-@pytest.mark.parametrize("field,value", [("request_budget", 0), ("request_budget", 10**7), ("rate_limit_rps", 0), ("rate_limit_rps", -1), ("timeout_seconds", 0), ("max_response_bytes", 10)])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("request_budget", 0),
+        ("request_budget", 10**7),
+        ("rate_limit_rps", 0),
+        ("rate_limit_rps", -1),
+        ("timeout_seconds", 0),
+        ("max_response_bytes", 10),
+    ],
+)
 def test_limits_have_sane_bounds(field: str, value: float) -> None:
     data = mini()
     data["scope"]["target"][field] = value
@@ -225,9 +274,18 @@ def _break(mutator: Any, fragment: str) -> None:
 
 
 def test_every_reference_must_resolve() -> None:
-    _break(lambda d: d["memberships"].append({"principal": "ghost", "tenant": "A", "role": "viewer", "status": "active"}), "ghost")
-    _break(lambda d: d["memberships"].append({"principal": "alice", "tenant": "Z", "role": "viewer", "status": "active"}), "Z")
-    _break(lambda d: d["memberships"].append({"principal": "alice", "tenant": "B", "role": "wizard", "status": "active"}), "wizard")
+    _break(
+        lambda d: d["memberships"].append({"principal": "ghost", "tenant": "A", "role": "viewer", "status": "active"}),
+        "ghost",
+    )
+    _break(
+        lambda d: d["memberships"].append({"principal": "alice", "tenant": "Z", "role": "viewer", "status": "active"}),
+        "Z",
+    )
+    _break(
+        lambda d: d["memberships"].append({"principal": "alice", "tenant": "B", "role": "wizard", "status": "active"}),
+        "wizard",
+    )
     _break(lambda d: d["resources"][4].__setitem__("tenant", "Z"), "Z")
     _break(lambda d: d["actions"][0].__setitem__("resource_kind", "invoice"), "invoice")
 
@@ -255,7 +313,10 @@ def test_every_path_parameter_must_be_supplied_by_every_resource_of_the_kind() -
 
 def test_policy_must_be_complete_default_deny_is_not_a_hole() -> None:
     _break(lambda d: d["policy"]["capabilities"].pop("project.read"), "project.read")
-    _break(lambda d: d["policy"]["capabilities"].__setitem__("project.read", ["viewer", "wizard"]), "wizard")
+    _break(
+        lambda d: d["policy"]["capabilities"].__setitem__("project.read", ["viewer", "wizard"]),
+        "wizard",
+    )
     _break(lambda d: d["policy"]["fields"].pop("project.detail"), "project.detail")
     _break(lambda d: d["policy"]["fields"]["project.detail"].__setitem__("id", "wizard"), "wizard")
     _break(lambda d: d["policy"].__setitem__("roles", ["viewer", "viewer"]), "roles")

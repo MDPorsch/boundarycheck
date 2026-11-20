@@ -29,14 +29,29 @@ def test_ordinary_ids_and_short_words_survive() -> None:
 
 
 def test_sensitive_headers_lose_their_values_whatever_the_case() -> None:
-    out = _r().headers({"Authorization": "Bearer abc", "COOKIE": "s=1", "Set-Cookie": "s=2", "Proxy-Authorization": "x", "Content-Type": "application/json", "X-Other": "ok"})
+    out = _r().headers(
+        {
+            "Authorization": "Bearer abc",
+            "COOKIE": "s=1",
+            "Set-Cookie": "s=2",
+            "Proxy-Authorization": "x",
+            "Content-Type": "application/json",
+            "X-Other": "ok",
+        }
+    )
     assert out["Authorization"] == "[redacted]" and out["COOKIE"] == "[redacted]"
     assert out["Set-Cookie"] == "[redacted]" and out["Proxy-Authorization"] == "[redacted]"
     assert out["Content-Type"] == "application/json" and out["X-Other"] == "ok"
 
 
 def test_masked_fields_are_replaced_at_any_depth_including_inside_lists() -> None:
-    body = json.dumps({"a": {"email_private": "x"}, "items": [{"email_private": "y", "keep": 1}], "email_private": "z"}).encode()
+    body = json.dumps(
+        {
+            "a": {"email_private": "x"},
+            "items": [{"email_private": "y", "keep": 1}],
+            "email_private": "z",
+        }
+    ).encode()
     out = json.loads(_r(mask=["email_private"]).body(body, "application/json"))
     assert out["a"]["email_private"] == "[masked]" and out["items"][0]["email_private"] == "[masked]"
     assert out["email_private"] == "[masked]" and out["items"][0]["keep"] == 1

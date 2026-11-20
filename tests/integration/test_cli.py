@@ -11,12 +11,15 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from tests.support import EXAMPLE, FakeServer, fake_server
+from tests.support import EXAMPLE, VULN_EXAMPLE, fake_server
 
 pytestmark = pytest.mark.milestone("S1")
 
 runner = CliRunner()
-CANARIES = {f"BC_TOKEN_{n}": f"canary-{n}-" + "Zq81xKd02LmPq77AbCd" for n in ("ALICE", "BOB", "CARLA", "DAVE", "ERIN", "FRANK", "GINA")}
+CANARIES = {
+    f"BC_TOKEN_{n}": f"canary-{n}-" + "Zq81xKd02LmPq77AbCd"
+    for n in ("ALICE", "BOB", "CARLA", "DAVE", "ERIN", "FRANK", "GINA")
+}
 
 
 def _app() -> Any:
@@ -45,7 +48,8 @@ def test_init_writes_a_template_that_validates_and_will_not_overwrite(tmp_path: 
     out = _invoke("init", "--output", str(target))
     assert out.exit_code == 0 and target.is_file()
     load_config(target)
-    assert "token" not in target.read_text().lower().replace("env var", "")  # no secret-looking placeholders
+    text = target.read_text()
+    assert "eyJ" not in text and "Bearer" not in text and "password" not in text.lower()  # no secret-shaped values
     before = target.read_text()
     again = _invoke("init", "--output", str(target))
     assert again.exit_code == 2 and "exists" in again.output.lower() and target.read_text() == before
@@ -82,7 +86,9 @@ def test_plan_prints_every_request_and_sends_nothing(monkeypatch: pytest.MonkeyP
     assert "Bearer" not in out.output and "eyJ" not in out.output
 
 
-def test_a_fixture_run_against_the_patched_lab_exits_zero_and_saves_a_private_run(tmp_path: Path) -> None:
+def test_a_fixture_run_against_the_patched_lab_exits_zero_and_saves_a_private_run(
+    tmp_path: Path,
+) -> None:
     runs = tmp_path / "runs"
     out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(runs))
     assert out.exit_code == 0, out.output
@@ -93,25 +99,70 @@ def test_a_fixture_run_against_the_patched_lab_exits_zero_and_saves_a_private_ru
 
 
 def test_a_vulnerable_variant_is_detected_and_exits_one(tmp_path: Path) -> None:
-    out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--fixture-variant", "vulnerable", "--fixture-flaws", "ROLE_CHECK_MISSING", "--runs-dir", str(tmp_path / "r"))
+    out = _invoke(
+        "test",
+        "--config",
+        str(VULN_EXAMPLE),
+        "--transport",
+        "fixture",
+        "--fixture-flaws",
+        "ROLE_CHECK_MISSING",
+        "--runs-dir",
+        str(tmp_path / "r"),
+    )
     assert out.exit_code == 1 and "finding_candidate" in out.output and "bob:contact.private.read:PA1" in out.output
+    assert "BC-ROLE-01" in out.output and "TENANT" not in out.output.upper().replace("TENANT-BOUNDARY-LAB", "")
 
 
 def test_no_save_writes_nothing(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
-    out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(runs), "--no-save")
+    out = _invoke(
+        "test",
+        "--config",
+        str(EXAMPLE),
+        "--transport",
+        "fixture",
+        "--runs-dir",
+        str(runs),
+        "--no-save",
+    )
     assert out.exit_code == 0 and not runs.exists()
 
 
-@pytest.mark.parametrize("extra", [["--transport", "bogus"], ["--transport", "fixture", "--fixture-flaws", "NOT_A_FLAW", "--fixture-variant", "vulnerable"], ["--transport", "fixture", "--fixture-variant", "nope"], ["--transport", "fixture", "--fixture-flaws", "ROLE_CHECK_MISSING"]])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--transport", "bogus"],
+        [
+            "--transport",
+            "fixture",
+            "--fixture-flaws",
+            "NOT_A_FLAW",
+            "--fixture-variant",
+            "vulnerable",
+        ],
+        ["--transport", "fixture", "--fixture-variant", "nope"],
+        ["--transport", "fixture", "--fixture-flaws", "ROLE_CHECK_MISSING"],
+    ],
+)
 def test_usage_errors_exit_two_before_anything_runs(tmp_path: Path, extra: list[str]) -> None:
     out = _invoke("test", "--config", str(EXAMPLE), "--runs-dir", str(tmp_path / "r"), *extra)
     assert out.exit_code == 2 and not (tmp_path / "r").exists()
 
 
 def test_a_missing_lab_is_a_clear_message_not_a_traceback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for name in [n for n in sys.modules if n == "tenantlab" or n.startswith("tenantlab.")]:
+        monkeypatch.setitem(sys.modules, name, None)  # already-imported submodules would otherwise win
     monkeypatch.setitem(sys.modules, "tenantlab", None)
-    out = _invoke("test", "--config", str(EXAMPLE), "--transport", "fixture", "--runs-dir", str(tmp_path / "r"))
+    out = _invoke(
+        "test",
+        "--config",
+        str(EXAMPLE),
+        "--transport",
+        "fixture",
+        "--runs-dir",
+        str(tmp_path / "r"),
+    )
     assert out.exit_code == 2 and "tenant-boundary-lab" in out.output and "Traceback" not in out.output
 
 
@@ -132,8 +183,17 @@ def _live_config(tmp_path: Path, base_url: str) -> Path:
 
 def test_live_without_credentials_cannot_be_clean(tmp_path: Path) -> None:
     with fake_server() as server:
-        out = _invoke("test", "--config", str(_live_config(tmp_path, server.base_url)), "--transport", "live", "--runs-dir", str(tmp_path / "r"))
-    assert out.exit_code == 2 and "not_run" in out.output
+        server.default = lambda h: h._send(401, {"content-type": "application/json"}, b'{"code":"auth.token_invalid"}')
+        out = _invoke(
+            "test",
+            "--config",
+            str(_live_config(tmp_path, server.base_url)),
+            "--transport",
+            "live",
+            "--runs-dir",
+            str(tmp_path / "r"),
+        )
+    assert out.exit_code == 2 and "not_run" in out.output and "no credential" in out.output
 
 
 def test_a_target_that_echoes_every_token_leaves_no_token_anywhere(tmp_path: Path) -> None:
@@ -145,12 +205,21 @@ def test_a_target_that_echoes_every_token_leaves_no_token_anywhere(tmp_path: Pat
 
         auth = handler.headers.get("Authorization", "")
         body = _json.dumps({"id": "x", "echo": auth, "title": auth}).encode()
-        handler._send(200, {"content-type": "application/json", "x-echo": auth}, body)  # noqa: SLF001
+        handler._send(200, {"content-type": "application/json", "x-echo": auth}, body)
 
     runs = tmp_path / "runs"
     with fake_server() as server:
         server.default = echo
-        out = _invoke("test", "--config", str(_live_config(tmp_path, server.base_url)), "--transport", "live", "--runs-dir", str(runs), env=CANARIES)
+        out = _invoke(
+            "test",
+            "--config",
+            str(_live_config(tmp_path, server.base_url)),
+            "--transport",
+            "live",
+            "--runs-dir",
+            str(runs),
+            env=CANARIES,
+        )
     assert out.exit_code == 1, out.output
     haystacks = [out.output] + [p.read_text(errors="replace") for p in runs.rglob("*") if p.is_file()]
     assert len(haystacks) > 10
@@ -173,7 +242,18 @@ def test_report_list_runs_and_purge(tmp_path: Path) -> None:
     assert as_md.exit_code == 0 and as_md.output.startswith("# boundarycheck report")
     assert _invoke("report", "--run", "../etc", "--format", "json", "--runs-dir", str(runs)).exit_code == 2
     assert _invoke("report", "--run", run_id, "--format", "xml", "--runs-dir", str(runs)).exit_code == 2
-    assert _invoke("report", "--run", "20200101T000000Z-00000000", "--format", "json", "--runs-dir", str(runs)).exit_code == 2
+    assert (
+        _invoke(
+            "report",
+            "--run",
+            "20200101T000000Z-00000000",
+            "--format",
+            "json",
+            "--runs-dir",
+            str(runs),
+        ).exit_code
+        == 2
+    )
     kept = _invoke("purge", "--older-than", "30d", "--runs-dir", str(runs))
     assert kept.exit_code == 0 and (runs / run_id).exists()
     assert _invoke("purge", "--older-than", "banana", "--runs-dir", str(runs)).exit_code == 2

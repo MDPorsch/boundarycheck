@@ -1,0 +1,113 @@
+# boundarycheck example: the DELIBERATELY VULNERABLE variant of the tenant-boundary-lab.
+#
+# Identical to examples/lab.yaml except for the two read routes the vulnerable variant does not
+# implement (audit and the nested invoice route; tests/integration/test_examples.py keeps the two
+# files in step). With no flaw enabled it is clean; enable flaws one at a time:
+#
+#   boundarycheck test --config examples/lab-vulnerable.yaml --transport fixture --fixture-flaws ROLE_CHECK_MISSING
+#   (flaws: TENANT_PREDICATE_OMITTED, ROLE_CHECK_MISSING, PRIVATE_PROPERTY_SERIALIZED, MARKET_BOUNDARY_OMITTED)
+#
+# Original header follows.
+# boundarycheck example: the tenant-boundary-lab reference target.
+#
+# This file is the ASSESSOR'S declaration of what the API is supposed to do. It was written from the
+# lab's published documents (lab/docs/authorization-matrix.md, lab/docs/api-contract.md), never from
+# its code, which is the point: the judge must not inherit the bugs of the thing being judged.
+#
+#   boundarycheck validate --config examples/lab.yaml
+#   boundarycheck plan     --config examples/lab.yaml        # every request, nothing is sent
+#   boundarycheck test     --config examples/lab.yaml --transport fixture
+#
+# All data is synthetic. There are NO secrets in this file: credentials come from the fixture
+# transport (minted in memory per run) or from environment variables (live transport).
+version: 1
+
+scope:
+  id: lab-vulnerable-demo
+  target:
+    label: tenant-boundary-lab (vulnerable)
+    fixture: {adapter: tenant-boundary-lab, variant: vulnerable}   # --transport fixture
+    base_url: http://127.0.0.1:8099                             # --transport live (loopback only)
+    request_budget: 500
+    rate_limit_rps: 50
+
+tenants:
+  - {key: A, state: active,    allowed: {market: [UK]}}
+  - {key: B, state: active,    allowed: {market: [US]}}
+  - {key: C, state: suspended, allowed: {market: [UK]}}
+
+principals:
+  alice: {label: "tenant A owner",                     credential: {fixture: alice, env: BC_TOKEN_ALICE}}
+  bob:   {label: "tenant A viewer",                    credential: {fixture: bob,   env: BC_TOKEN_BOB}}
+  carla: {label: "tenant B admin",                     credential: {fixture: carla, env: BC_TOKEN_CARLA}}
+  dave:  {label: "A editor and B viewer",              credential: {fixture: dave,  env: BC_TOKEN_DAVE}}
+  erin:  {label: "disabled, still has a membership",   status: disabled, credential: {fixture: erin,  env: BC_TOKEN_ERIN}}
+  frank: {label: "revoked from tenant A",              credential: {fixture: frank, env: BC_TOKEN_FRANK}}
+  gina:  {label: "owner of suspended tenant C",        credential: {fixture: gina,  env: BC_TOKEN_GINA}}
+
+memberships:
+  - {principal: alice, tenant: A, role: owner,  status: active}
+  - {principal: bob,   tenant: A, role: viewer, status: active}
+  - {principal: carla, tenant: B, role: admin,  status: active}
+  - {principal: dave,  tenant: A, role: editor, status: active}
+  - {principal: dave,  tenant: B, role: viewer, status: active}
+  - {principal: erin,  tenant: A, role: editor, status: active}
+  - {principal: frank, tenant: A, role: editor, status: revoked}
+  - {principal: gina,  tenant: C, role: owner,  status: active}
+
+resources:
+  # tenants (the target of the tenant-level routes)
+  - {key: tenant-A, kind: tenant, tenant: A, ids: {tenant_id: "20000000-0000-4000-8000-000000000001"}}
+  - {key: tenant-B, kind: tenant, tenant: B, ids: {tenant_id: "20000000-0000-4000-8000-000000000002"}}
+  - {key: tenant-C, kind: tenant, tenant: C, ids: {tenant_id: "20000000-0000-4000-8000-000000000003"}}
+  - {key: tenant-missing, kind: tenant, exists: false, ids: {tenant_id: "20000000-0000-4000-8000-0000000000ff"}}
+  # projects. PA2 is in a market tenant A may not use: hidden from everyone.
+  - {key: PA1, kind: project, tenant: A, attributes: {market: UK}, ids: {project_id: "50000000-0000-4000-8000-000000000001"}}
+  - {key: PA2, kind: project, tenant: A, attributes: {market: US}, ids: {project_id: "50000000-0000-4000-8000-000000000002"}}
+  - {key: PB1, kind: project, tenant: B, attributes: {market: US}, ids: {project_id: "50000000-0000-4000-8000-000000000003"}}
+  - {key: PC1, kind: project, tenant: C, attributes: {market: UK}, ids: {project_id: "50000000-0000-4000-8000-000000000004"}}
+  - {key: project-missing, kind: project, exists: false, ids: {project_id: "50000000-0000-4000-8000-0000000000ff"}}
+  # invoices (both the flat and the nested route name the parent project too)
+  - {key: IA1, kind: invoice, tenant: A, attributes: {market: UK}, ids: {invoice_id: "60000000-0000-4000-8000-000000000001", project_id: "50000000-0000-4000-8000-000000000001"}}
+  - {key: IA2, kind: invoice, tenant: A, attributes: {market: US}, ids: {invoice_id: "60000000-0000-4000-8000-000000000002", project_id: "50000000-0000-4000-8000-000000000002"}}
+  - {key: IB1, kind: invoice, tenant: B, attributes: {market: US}, ids: {invoice_id: "60000000-0000-4000-8000-000000000003", project_id: "50000000-0000-4000-8000-000000000003"}}
+  - {key: invoice-missing, kind: invoice, exists: false, ids: {invoice_id: "60000000-0000-4000-8000-0000000000ff", project_id: "50000000-0000-4000-8000-000000000001"}}
+
+actions:
+  - {id: tenant.context.read, method: GET, path: "/v1/tenants/{tenant_id}/me",        resource_kind: tenant, surface: tenant.context}
+  - {id: project.list,        method: GET, path: "/v1/tenants/{tenant_id}/projects",  resource_kind: tenant, surface: project.list_item,
+     list: {kind: project, id_key: project_id, item_id_field: id, total_field: total}}
+  - {id: project.read,        method: GET, path: "/v1/projects/{project_id}",         resource_kind: project, surface: project.detail}
+  - {id: contact.private.read, method: GET, path: "/v1/projects/{project_id}/contacts", resource_kind: project, surface: contacts.private, page: true}
+  - {id: invoice.read,        method: GET, path: "/v1/invoices/{invoice_id}",         resource_kind: invoice, surface: invoice.detail}
+
+policy:
+  roles: [viewer, editor, admin, owner]          # ascending privilege; used for field floors
+  hidden_is_not_found: true                      # a resource you may not see answers like a missing one
+  capabilities:
+    tenant.context.read:  [viewer, editor, admin, owner]
+    project.list:         [viewer, editor, admin, owner]
+    project.read:         [viewer, editor, admin, owner]
+    invoice.read:         [viewer, editor, admin, owner]
+    contact.private.read: [admin, owner]
+  fields:                                        # field -> minimum role that may see it
+    tenant.context: {principal_id: viewer, tenant_id: viewer, role: viewer}
+    project.list_item: {id: viewer, tenant_id: viewer, market: viewer, title: viewer, status: viewer, row_version: viewer}
+    project.detail:
+      id: viewer
+      tenant_id: viewer
+      market: viewer
+      title: viewer
+      status: viewer
+      row_version: viewer
+      contacts: viewer
+      "contacts[].id": viewer
+      "contacts[].public_name": viewer
+      owner_principal_id: editor                 # object ownership is informational (lab D-04)
+    contacts.private: {id: viewer, public_name: viewer, email_private: admin, phone_private: admin}
+    invoice.detail: {id: viewer, tenant_id: viewer, project_id: viewer, amount_minor: viewer, currency: viewer, status: viewer}
+  concealment:
+    ignore_body_fields: [request_id]             # the lab puts a fresh request id in every error body
+
+redaction:
+  mask_fields: [email_private, phone_private]

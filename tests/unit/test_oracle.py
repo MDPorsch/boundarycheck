@@ -104,10 +104,13 @@ def test_a_tenant_without_a_declared_scope_does_not_hide_anything() -> None:
     assert _expect(data, "alice", "project.read", "PA2").outcome.value == "allow"
 
 
-def test_a_resource_missing_a_scoped_attribute_is_hidden() -> None:
+def test_a_resource_that_does_not_declare_a_scoped_attribute_is_not_subject_to_it() -> None:
+    """Documented choice: a forgotten attribute makes the oracle expect `allow`, so a correct target
+    that hides the object is reported as a low-severity candidate (fails closed) rather than a
+    missing attribute silently hiding things or raising a false high-severity alarm."""
     data = mini()
     data["resources"][5]["attributes"] = {}
-    assert _expect(data, "alice", "project.read", "PA2").reason == "scope_hidden"
+    assert _expect(data, "alice", "project.read", "PA2").outcome.value == "allow"
 
 
 def test_the_oracle_is_deterministic_and_pure() -> None:
